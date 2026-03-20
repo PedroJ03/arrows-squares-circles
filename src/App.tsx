@@ -6,6 +6,8 @@ import { createGestureController } from './canvas/interaction/gesture'
 import { TextEditorOverlay } from './canvas/text/TextEditorOverlay'
 import { exportPng, exportSvg } from './canvas/export/export'
 import { loadCanvasState, saveCanvasState } from './canvas/persistence/local'
+import { OverlayLayers } from './canvas/overlay/OverlayLayers'
+import { fitViewToContent, getSceneBounds, getObjectBounds } from './canvas/model/geometry'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
@@ -83,7 +85,7 @@ const WIDTHS: StrokeWidth[] = [1, 2, 4, 8]
 const ARROW_STYLES: ArrowStyle[] = ['straight', 'dashed', 'elbow']
 const FONT_SIZES: TextFontSize[] = [16, 24, 32, 48]
 
-const useCanvasState = (store: ReturnType<typeof createCanvasStore>) => {
+export const useCanvasState = (store: ReturnType<typeof createCanvasStore>) => {
   const [state, setState] = useState(store.getState())
   useEffect(() => store.subscribe(() => setState(store.getState())), [store])
   return state
@@ -107,6 +109,16 @@ function App() {
         store,
         svgRef,
         onCommit: () => saveCanvasState(store.getState()),
+        onFitRequested: () => {
+          const sceneBounds = getSceneBounds(store.getState().scene)
+          if (sceneBounds && containerRef.current) {
+            const vw = containerRef.current.clientWidth
+            const vh = containerRef.current.clientHeight
+            const { pan, zoom } = fitViewToContent(sceneBounds, vw, vh)
+            store.dispatch({ type: 'view/pan', dx: pan.x - store.getState().view.pan.x, dy: pan.y - store.getState().view.pan.y }, { history: false })
+            store.dispatch({ type: 'view/setZoom', zoom }, { history: false })
+          }
+        },
       }),
     [store],
   )
@@ -184,6 +196,33 @@ function App() {
     }
     store.dispatch({ type: 'selection/setEditingText', id: null })
   }
+
+  // Wire toolbar visibility based on selection
+  useEffect(() => {
+    const { ids } = state.selection
+    if (ids.length > 0) {
+      // Compute bounding box of selected objects
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (const id of ids) {
+        const obj = state.scene.byId[id]
+        if (!obj) continue
+        const bounds = getObjectBounds(obj, state.scene)
+        minX = Math.min(minX, bounds.x)
+        minY = Math.min(minY, bounds.y)
+        maxX = Math.max(maxX, bounds.x + bounds.width)
+        maxY = Math.max(maxY, bounds.y + bounds.height)
+      }
+      if (isFinite(minX)) {
+        store.dispatch({
+          type: 'overlay/setToolbar',
+          visible: true,
+          anchorBounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+        })
+      }
+    } else {
+      store.dispatch({ type: 'overlay/setToolbar', visible: false, anchorBounds: null })
+    }
+  }, [state.selection.ids, state.scene.byId])
 
   return (
     <div
@@ -364,7 +403,7 @@ function App() {
       </aside>
 
       {/* Canvas */}
-      <main className="canvas-wrapper">
+      <main className="canvas-wrapper" ref={containerRef}>
         {SvgRenderer.render({
           state,
           svgRef,
@@ -390,6 +429,7 @@ function App() {
           onCommit={handleTextCommit}
           onCancel={handleTextCancel}
         />
+        <OverlayLayers store={store} containerRef={containerRef} />
       </main>
 
       {/* Export buttons */}

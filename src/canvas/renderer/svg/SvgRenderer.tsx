@@ -1,4 +1,5 @@
 import { SelectionLayer } from '../../selection/selection'
+import { GuideOverlay } from './GuideOverlay'
 import { getArrowPathPoints, hitTestScene } from '../../model/geometry'
 import type { CanvasState, TextObject } from '../../model/types'
 import type { Renderer, RendererProps } from '../Renderer'
@@ -106,6 +107,7 @@ export const SvgRenderer: Renderer = {
             return null
           })}
           <SelectionLayer state={state} />
+          <GuideOverlay state={state} />
         </g>
         <defs>
           <marker

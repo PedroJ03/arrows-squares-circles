@@ -1,5 +1,5 @@
 import type { CanvasStore } from '../store/canvasStore'
-import type { Arrow, ArrowEndpoint, Bounds, CanvasObject, Point, Shape } from '../model/types'
+import type { Arrow, ArrowEndpoint, Bounds, CanvasObject, Point, Shape, Tool } from '../model/types'
 import {
   ENDPOINT_ATTACH_DISTANCE,
   distance,
@@ -11,6 +11,75 @@ import {
   inverseRotatePoint,
 } from '../model/geometry'
 import { applySnapToNode, applySnapToPoint, getSnapTargets } from '../snapping/snapping'
+
+export const DUPLICATE_OFFSET = 20
+
+/**
+ * Pure function to compute duplicate objects from a scene and selection.
+ * Returns { additions, arrowUpdates } where:
+ * - additions: objects to add to the scene
+ * - arrowUpdates: updates to apply to existing arrows (remap attached endpoints)
+ */
+export function getDuplicateObjects(
+  scene: { byId: Record<string, import('../model/types').CanvasObject>; order: string[] },
+  selectionIds: string[]
+): { additions: import('../model/types').CanvasObject[]; arrowUpdates: { id: string; start: import('../model/types').ArrowEndpoint; end: import('../model/types').ArrowEndpoint }[] } {
+  if (selectionIds.length === 0) return { additions: [], arrowUpdates: [] }
+
+  // Build id remap
+  const idMap = new Map<string, string>()
+  const newIds: string[] = []
+  for (const id of selectionIds) {
+    const newId = crypto.randomUUID()
+    idMap.set(id, newId)
+    newIds.push(newId)
+  }
+
+  // Clone each object with new ID and offset
+  const additions: import('../model/types').CanvasObject[] = []
+  for (const id of selectionIds) {
+    const obj = scene.byId[id]
+    if (!obj) continue
+    let clone: import('../model/types').CanvasObject = { ...obj, id: idMap.get(id)! }
+    if (clone.type === 'rectangle' || clone.type === 'ellipse') {
+      clone = { ...clone, x: clone.x + DUPLICATE_OFFSET, y: clone.y + DUPLICATE_OFFSET }
+    } else if (clone.type === 'arrow') {
+      const aClone = clone
+      const start = aClone.start.kind === 'attached'
+        ? { kind: 'attached' as const, targetId: idMap.get(aClone.start.targetId) ?? aClone.start.targetId, anchor: aClone.start.anchor }
+        : { kind: 'free' as const, x: aClone.start.x + DUPLICATE_OFFSET, y: aClone.start.y + DUPLICATE_OFFSET }
+      const end = aClone.end.kind === 'attached'
+        ? { kind: 'attached' as const, targetId: idMap.get(aClone.end.targetId) ?? aClone.end.targetId, anchor: aClone.end.anchor }
+        : { kind: 'free' as const, x: aClone.end.x + DUPLICATE_OFFSET, y: aClone.end.y + DUPLICATE_OFFSET }
+      clone = { ...clone, start, end }
+    } else if (clone.type === 'text') {
+      clone = { ...clone, x: clone.x + DUPLICATE_OFFSET, y: clone.y + DUPLICATE_OFFSET }
+    }
+    additions.push(clone)
+  }
+
+  // Find arrow updates (arrows pointing to original shapes)
+  const arrowUpdates: { id: string; start: import('../model/types').ArrowEndpoint; end: import('../model/types').ArrowEndpoint }[] = []
+  for (const id of scene.order) {
+    const obj = scene.byId[id]
+    if (!obj || obj.type !== 'arrow') continue
+    const arrow = obj
+    let changed = false
+    const newStart = arrow.start.kind === 'attached' && idMap.has(arrow.start.targetId)
+      ? { ...arrow.start, targetId: idMap.get(arrow.start.targetId)! }
+      : arrow.start
+    if (newStart !== arrow.start) changed = true
+    const newEnd = arrow.end.kind === 'attached' && idMap.has(arrow.end.targetId)
+      ? { ...arrow.end, targetId: idMap.get(arrow.end.targetId)! }
+      : arrow.end
+    if (newEnd !== arrow.end) changed = true
+    if (changed) {
+      arrowUpdates.push({ id: arrow.id, start: newStart, end: newEnd })
+    }
+  }
+
+  return { additions, arrowUpdates }
+}
 
 type InteractionMode =
   | 'idle'
@@ -37,6 +106,7 @@ export const createGestureController = (options: {
   store: CanvasStore
   svgRef: React.RefObject<SVGSVGElement | null>
   onCommit?: () => void
+  onFitRequested?: () => void
 }) => {
   const { store, svgRef, onCommit } = options
   const state: InteractionState = {
@@ -92,6 +162,7 @@ export const createGestureController = (options: {
     state.objectId = obj.id
     state.startObject = { ...obj } as CanvasObject
     store.startHistory()
+    store.dispatch({ type: 'overlay/setGuideLayer', visible: true, guides: [] }, { history: false })
   }
 
   const startResize = (event: React.PointerEvent<SVGSVGElement>, node: Shape, handle: string) => {
@@ -101,6 +172,7 @@ export const createGestureController = (options: {
     state.handle = handle
     state.startObject = { ...node } as CanvasObject
     store.startHistory()
+    store.dispatch({ type: 'overlay/setGuideLayer', visible: true, guides: [] }, { history: false })
   }
 
   const startRotate = (event: React.PointerEvent<SVGSVGElement>, node: Shape) => {
@@ -138,6 +210,7 @@ export const createGestureController = (options: {
     state.startObject = undefined
     state.startView = undefined
     state.marqueeStart = undefined
+    store.dispatch({ type: 'overlay/setGuideLayer', visible: false, guides: [] }, { history: false })
   }
 
   const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -308,7 +381,9 @@ export const createGestureController = (options: {
 
     // Handle batch move for multi-selection
     const { selection } = store.getState()
-    if (selection.ids.length > 1 && selection.ids.includes(state.objectId)) {
+    if (selection.ids.length > 1 && selection.ids.includes(state.objectId!)) {
+      // Collect guides from all snapped shapes
+      let allGuides: import('../model/types').SnapGuide[] = []
       // Move all selected objects
       for (const id of selection.ids) {
         const startObj = selection.ids[0] === id ? state.startObject : store.getState().scene.byId[id]
@@ -333,11 +408,13 @@ export const createGestureController = (options: {
         // Shape drag
         const node = { ...startObj, x: startObj.x + dx, y: startObj.y + dy } as Shape
         const { scene, snapping } = store.getState()
-        const snappedNode = snapping.enabled
+        const result = snapping.enabled
           ? applySnapToNode(node, getSnapTargets(scene, id))
-          : node
-        store.dispatch({ type: 'object/update', id, patch: { x: snappedNode.x, y: snappedNode.y } }, { history: false })
+          : { node, guides: [] }
+        allGuides = allGuides.concat(result.guides)
+        store.dispatch({ type: 'object/update', id, patch: { x: result.node.x, y: result.node.y } }, { history: false })
       }
+      store.dispatch({ type: 'overlay/setGuideLayer', visible: true, guides: allGuides }, { history: false })
       return
     }
 
@@ -363,10 +440,11 @@ export const createGestureController = (options: {
     // Shape drag
     const node = { ...startObj, x: startObj.x + dx, y: startObj.y + dy } as Shape
     const { scene, snapping } = store.getState()
-    const snappedNode = snapping.enabled
+    const result = snapping.enabled
       ? applySnapToNode(node, getSnapTargets(scene, node.id))
-      : node
-    store.dispatch({ type: 'object/update', id: state.objectId!, patch: { x: snappedNode.x, y: snappedNode.y } }, { history: false })
+      : { node, guides: [] }
+    store.dispatch({ type: 'object/update', id: state.objectId!, patch: { x: result.node.x, y: result.node.y } }, { history: false })
+    store.dispatch({ type: 'overlay/setGuideLayer', visible: true, guides: result.guides }, { history: false })
   }
 
   const updateResize = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -398,9 +476,10 @@ export const createGestureController = (options: {
 
     const resized = { ...node, x, y, width, height }
     const { scene, snapping } = store.getState()
-    const snapped = snapping.enabled
+    const snapResult = snapping.enabled
       ? applySnapToNode(resized, getSnapTargets(scene, node.id))
-      : resized
+      : { node: resized, guides: [] }
+    const snapped = snapResult.node
     store.dispatch(
       {
         type: 'object/update',
@@ -409,6 +488,7 @@ export const createGestureController = (options: {
       },
       { history: false },
     )
+    store.dispatch({ type: 'overlay/setGuideLayer', visible: true, guides: snapResult.guides }, { history: false })
   }
 
   const updateRotate = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -541,8 +621,98 @@ export const createGestureController = (options: {
     event.preventDefault()
   }
 
+  const isEditingText = (): boolean => {
+    const active = document.activeElement
+    if (!active) return false
+    if (active.tagName === 'TEXTAREA') return true
+    if (active.getAttribute('contenteditable') === 'true') return true
+    if (store.getState().selection.editingTextId !== null) return true
+    return false
+  }
+
+  const duplicateSelection = () => {
+    const { selection, scene } = store.getState()
+    if (selection.ids.length === 0) return
+    store.startHistory()
+
+    const { additions, arrowUpdates } = getDuplicateObjects(scene, selection.ids)
+
+    // Collect new IDs for selection
+    const newIds = additions.map(obj => obj.id)
+
+    // Add all clones
+    for (const obj of additions) {
+      store.dispatch({ type: 'object/add', object: obj }, { history: false })
+    }
+
+    // Update arrows that pointed to original shapes
+    for (const update of arrowUpdates) {
+      store.dispatch({ type: 'object/update', id: update.id, patch: { start: update.start, end: update.end } }, { history: false })
+    }
+
+    // Select the new clones
+    store.dispatch({ type: 'selection/setMany', ids: newIds }, { history: false })
+    store.commitHistory()
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent) => {
     keys.add(event.key)
+
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+    const mod = isMac ? event.metaKey : event.ctrlKey
+
+    // Shortcuts that should NOT be blocked by text editing
+    if (mod && event.shiftKey && (event.key === 'D' || event.key === 'd')) {
+      event.preventDefault()
+      duplicateSelection()
+      return
+    }
+
+    if (mod && event.key === '0') {
+      event.preventDefault()
+      store.dispatch({ type: 'view/setZoom', zoom: 1 })
+      return
+    }
+    if (mod && (event.key === '+' || event.key === '=')) {
+      event.preventDefault()
+      store.dispatch({ type: 'view/zoom', scale: 1.25, anchor: { x: 0, y: 0 } })
+      return
+    }
+    if (mod && event.key === '-') {
+      event.preventDefault()
+      store.dispatch({ type: 'view/zoom', scale: 0.8, anchor: { x: 0, y: 0 } })
+      return
+    }
+    if (mod && event.key === '1') {
+      event.preventDefault()
+      options.onFitRequested?.()
+      return
+    }
+
+    // Guard: skip tool/delete shortcuts when editing text
+    if (isEditingText()) return
+
+    // Tool shortcuts
+    const toolMap: Record<string, Tool> = {
+      v: 'pointer', V: 'pointer',
+      r: 'rectangle', R: 'rectangle',
+      o: 'ellipse', O: 'ellipse',
+      a: 'arrow', A: 'arrow',
+      t: 'text', T: 'text',
+    }
+    if (toolMap[event.key] && !mod) {
+      store.dispatch({ type: 'tool/set', tool: toolMap[event.key] })
+      return
+    }
+
+    // Delete / Backspace
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      const { selection } = store.getState()
+      if (selection.ids.length > 0) {
+        store.dispatch({ type: 'objects/deleteMany', ids: selection.ids })
+      }
+      return
+    }
   }
 
   const handleKeyUp = (event: React.KeyboardEvent) => {

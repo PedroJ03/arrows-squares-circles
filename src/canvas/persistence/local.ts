@@ -161,6 +161,7 @@ export const loadCanvasState = (): CanvasState | null => {
         selection: { ids: [], primaryId: null, marquee: null, editingTextId: null },
         defaults: migrated.defaults,
         ui: { tool: 'pointer', textFontSize: 24 },
+        overlay: { floatingToolbar: { visible: false, anchorBounds: null }, guideLayer: { visible: false, guides: [] }, zoomControls: { visible: true }, minimap: { visible: true, width: 200, height: 150 } },
       }
     }
     
@@ -173,6 +174,7 @@ export const loadCanvasState = (): CanvasState | null => {
       selection: { ids: [], primaryId: null, marquee: null, editingTextId: null },
       defaults: v3.defaults ?? defaultDefaults,
       ui: v3.ui ? { tool: v3.ui.tool as Tool, textFontSize: v3.ui.textFontSize } : { tool: 'pointer', textFontSize: 24 },
+      overlay: { floatingToolbar: { visible: false, anchorBounds: null }, guideLayer: { visible: false, guides: [] }, zoomControls: { visible: true }, minimap: { visible: true, width: 200, height: 150 } },
     }
   } catch (error) {
     return null

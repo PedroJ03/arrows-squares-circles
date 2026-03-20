@@ -29,6 +29,13 @@ const defaultDefaults: StyleDefaults = {
   textFontSize: 24,
 }
 
+const defaultOverlay = {
+  floatingToolbar: { visible: false, anchorBounds: null },
+  guideLayer: { visible: false, guides: [] },
+  zoomControls: { visible: true },
+  minimap: { visible: true, width: 200, height: 150 },
+}
+
 const createDefaultState = (): CanvasState => ({
   scene: { byId: {}, order: [] },
   view: { pan: { x: 0, y: 0 }, zoom: 1 },
@@ -36,6 +43,7 @@ const createDefaultState = (): CanvasState => ({
   ui: { tool: 'pointer', textFontSize: 24 },
   snapping: { enabled: true },
   defaults: defaultDefaults,
+  overlay: defaultOverlay,
 })
 
 const reducer = (state: CanvasState, action: CanvasAction): CanvasState => {
@@ -160,6 +168,103 @@ const reducer = (state: CanvasState, action: CanvasAction): CanvasState => {
         ...state,
         ui: { ...state.ui, textFontSize: action.fontSize },
         defaults: { ...state.defaults, textFontSize: action.fontSize },
+      }
+    case 'scene/reorder': {
+      const { ids, direction } = action
+      const idSet = new Set(ids)
+      const others = state.scene.order.filter((id) => !idSet.has(id))
+      let newOrder: string[]
+      switch (direction) {
+        case 'front': {
+          // Maintain relative order of selected, place at end
+          const selected = state.scene.order.filter((id) => idSet.has(id))
+          newOrder = [...others, ...selected]
+          break
+        }
+        case 'back': {
+          // Maintain relative order of selected, place at start
+          const selected = state.scene.order.filter((id) => idSet.has(id))
+          newOrder = [...selected, ...others]
+          break
+        }
+        case 'forward': {
+          // For forward: move each selected to just after the next non-selected item above it
+          const selected = state.scene.order.filter((id) => idSet.has(id))
+          newOrder = []
+          for (const id of state.scene.order) {
+            if (idSet.has(id)) {
+              // Find next non-selected item
+              const idx = state.scene.order.indexOf(id)
+              let inserted = false
+              for (let i = idx + 1; i < state.scene.order.length; i++) {
+                const next = state.scene.order[i]
+                if (!idSet.has(next)) {
+                  // Place selected right before this non-selected
+                  if (!newOrder.includes(id)) newOrder.push(id)
+                  if (!newOrder.includes(next)) newOrder.push(next)
+                  inserted = true
+                  break
+                }
+              }
+              if (!inserted) {
+                if (!newOrder.includes(id)) newOrder.push(id)
+              }
+            } else {
+              if (!newOrder.includes(id)) newOrder.push(id)
+            }
+          }
+          // Ensure all selected are included
+          for (const selId of selected) {
+            if (!newOrder.includes(selId)) newOrder.push(selId)
+          }
+          break
+        }
+        case 'backward': {
+          // Place all non-selected first, then selected at back (maintaining relative order)
+          const selected = state.scene.order.filter((id) => idSet.has(id))
+          const others = state.scene.order.filter((id) => !idSet.has(id))
+          newOrder = [...others, ...selected]
+          break
+        }
+        default:
+          return state
+      }
+      return { ...state, scene: { ...state.scene, order: newOrder } }
+    }
+    case 'view/setZoom': {
+      const zoom = Math.min(4, Math.max(0.25, action.zoom))
+      return { ...state, view: { ...state.view, zoom } }
+    }
+    case 'view/fit':
+      return state // Handled by App level — returns new pan/zoom
+    case 'overlay/setToolbar':
+      return {
+        ...state,
+        overlay: {
+          ...state.overlay,
+          floatingToolbar: { visible: action.visible, anchorBounds: action.anchorBounds },
+        },
+      }
+    case 'overlay/setGuideLayer':
+      return {
+        ...state,
+        overlay: {
+          ...state.overlay,
+          guideLayer: {
+            visible: action.visible,
+            guides: action.guides ?? state.overlay.guideLayer.guides,
+          },
+        },
+      }
+    case 'overlay/setZoomControls':
+      return {
+        ...state,
+        overlay: { ...state.overlay, zoomControls: { visible: action.visible } },
+      }
+    case 'overlay/setMinimap':
+      return {
+        ...state,
+        overlay: { ...state.overlay, minimap: { ...state.overlay.minimap, visible: action.visible } },
       }
     default:
       return state

@@ -281,6 +281,8 @@ describe('App integration', () => {
         view: { pan: { x: 0, y: 0 }, zoom: 1 },
         snapping: { enabled: true },
         defaults: { strokeColor: '#2b2d42', strokeWidth: 2, arrowStyle: 'straight', fillColor: 'transparent', textFontSize: 24 },
+        ui: { tool: 'pointer', textFontSize: 24 },
+        overlay: { floatingToolbar: { visible: false, anchorBounds: null }, guideLayer: { visible: false, guides: [] }, zoomControls: { visible: true }, minimap: { visible: true, width: 200, height: 150 } },
       }),
     )
 

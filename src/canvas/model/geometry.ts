@@ -255,3 +255,49 @@ export const getRotateHandlePoint = (node: Shape): Point => {
     y: topMid.y + (dy / len) * ROTATE_HANDLE_GAP,
   }
 }
+
+// --- Scene-level bounds ---
+
+export const getSceneBounds = (scene: Scene): Bounds | null => {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  let hasAny = false
+  for (const id of scene.order) {
+    const obj = scene.byId[id]
+    if (!obj) continue
+    hasAny = true
+    const bounds = getObjectBounds(obj, scene)
+    minX = Math.min(minX, bounds.x)
+    minY = Math.min(minY, bounds.y)
+    maxX = Math.max(maxX, bounds.x + bounds.width)
+    maxY = Math.max(maxY, bounds.y + bounds.height)
+  }
+  if (!hasAny) return null
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+/**
+ * Compute view state (pan + zoom) to fit scene bounds within a viewport.
+ * @param sceneBounds  The bounding box of all shapes in canvas space
+ * @param viewportWidth  Visible viewport width in pixels
+ * @param viewportHeight  Visible viewport height in pixels
+ * @param padding  Extra margin around content (in canvas units)
+ */
+export const fitViewToContent = (
+  sceneBounds: Bounds,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding: number = 40,
+): { pan: Point; zoom: number } => {
+  const contentWidth = sceneBounds.width + padding * 2
+  const contentHeight = sceneBounds.height + padding * 2
+  const zoom = Math.min(
+    viewportWidth / contentWidth,
+    viewportHeight / contentHeight,
+    4, // max zoom
+  )
+  const canvasW = contentWidth * zoom
+  const canvasH = contentHeight * zoom
+  const panX = (viewportWidth - canvasW) / 2 - (sceneBounds.x - padding) * zoom
+  const panY = (viewportHeight - canvasH) / 2 - (sceneBounds.y - padding) * zoom
+  return { pan: { x: panX, y: panY }, zoom }
+}

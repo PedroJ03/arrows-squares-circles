@@ -28,10 +28,10 @@ describe('snapping', () => {
     }
 
     const targets = getSnapTargets(scene, movingNode.id)
-    const snapped = applySnapToNode(movingNode, targets)
+    const result = applySnapToNode(movingNode, targets)
 
-    expect(snapped.x).toBe(100)
-    expect(snapped.y).toBe(100)
+    expect(result.node.x).toBe(100)
+    expect(result.node.y).toBe(100)
   })
 
   it('snaps points when close to a target', () => {
@@ -78,5 +78,35 @@ describe('snapping', () => {
     const targets = getSnapTargets(scene)
     // Only the rectangle should contribute snap points
     expect(targets.length).toBe(9)
+  })
+
+  it('returns guide metadata when snapping', () => {
+    const anchorNode: Shape = { id: 'anchor', type: 'rectangle', x: 0, y: 0, width: 100, height: 100, rotation: 0 }
+    const movingNode: Shape = { id: 'moving', type: 'rectangle', x: 97, y: 98, width: 50, height: 50, rotation: 0 }
+    const scene: Scene = { byId: { anchor: anchorNode, moving: movingNode }, order: ['anchor', 'moving'] }
+    const targets = getSnapTargets(scene, movingNode.id)
+    const result = applySnapToNode(movingNode, targets)
+    // Snapped to x=100 (right edge), y=100 (bottom edge)
+    expect(result.guides.length).toBeGreaterThan(0)
+  })
+
+  it('returns no guides when no snap occurred', () => {
+    const anchorNode: Shape = { id: 'anchor', type: 'rectangle', x: 0, y: 0, width: 100, height: 100, rotation: 0 }
+    const movingNode: Shape = { id: 'moving', type: 'rectangle', x: 300, y: 300, width: 50, height: 50, rotation: 0 }
+    const scene: Scene = { byId: { anchor: anchorNode, moving: movingNode }, order: ['anchor', 'moving'] }
+    const targets = getSnapTargets(scene, movingNode.id)
+    const result = applySnapToNode(movingNode, targets)
+    expect(result.guides.length).toBe(0)
+  })
+
+  it('guide has correct axis and type', () => {
+    const anchorNode: Shape = { id: 'anchor', type: 'rectangle', x: 0, y: 0, width: 100, height: 100, rotation: 0 }
+    const movingNode: Shape = { id: 'moving', type: 'rectangle', x: 97, y: 50, width: 50, height: 50, rotation: 0 }
+    const scene: Scene = { byId: { anchor: anchorNode, moving: movingNode }, order: ['anchor', 'moving'] }
+    const targets = getSnapTargets(scene, movingNode.id)
+    const result = applySnapToNode(movingNode, targets)
+    const xGuide = result.guides.find(g => g.axis === 'x')
+    expect(xGuide?.type).toBe('edge')
+    expect(xGuide?.axis).toBe('x')
   })
 })

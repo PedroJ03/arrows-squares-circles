@@ -1,4 +1,4 @@
-import type { Point, Scene, Shape } from '../model/types'
+import type { Point, Scene, Shape, SnapGuide } from '../model/types'
 import { SNAP_DISTANCE, getNodeCenter } from '../model/geometry'
 
 export type SnapTarget = { x: number; y: number }
@@ -43,37 +43,70 @@ export const applySnapToNode = (
   node: Shape,
   targets: SnapTarget[],
   threshold: number = SNAP_DISTANCE,
-): Shape => {
+): { node: Shape; guides: SnapGuide[] } => {
   const center = getNodeCenter(node)
-  const candidatesX = [node.x, center.x, node.x + node.width]
-  const candidatesY = [node.y, center.y, node.y + node.height]
   let bestDx = 0
   let bestDy = 0
   let bestXDist = threshold
   let bestYDist = threshold
+  let bestXSource = ''
+  let bestYSource = ''
 
   targets.forEach((target) => {
-    candidatesX.forEach((cx) => {
+    const edgeValues = [node.x, center.x, node.x + node.width]
+    const edgeRefs = ['left', 'centerX', 'right']
+    edgeValues.forEach((cx, ci) => {
       const dx = target.x - cx
       const dist = Math.abs(dx)
       if (dist < bestXDist) {
         bestXDist = dist
         bestDx = dx
+        bestXSource = edgeRefs[ci]
       }
     })
-    candidatesY.forEach((cy) => {
+
+    const edgeYValues = [node.y, center.y, node.y + node.height]
+    const edgeYRefs = ['top', 'centerY', 'bottom']
+    edgeYValues.forEach((cy, ci) => {
       const dy = target.y - cy
       const dist = Math.abs(dy)
       if (dist < bestYDist) {
         bestYDist = dist
         bestDy = dy
+        bestYSource = edgeYRefs[ci]
       }
     })
   })
 
-  return {
+  // Build guide metadata for snapping axes that actually snapped
+  const guides: SnapGuide[] = []
+  const snappedNode = {
     ...node,
     x: node.x + bestDx,
     y: node.y + bestDy,
   }
+
+  // Only emit guides when snapped (distance below threshold)
+  if (bestXDist < threshold && bestXSource) {
+    const refCenter = getNodeCenter(snappedNode)
+    const isCenter = bestXSource === 'centerX'
+    guides.push({
+      type: isCenter ? 'center' : 'edge',
+      axis: 'x',
+      value: isCenter ? refCenter.x : snappedNode.x + (bestXSource === 'left' ? 0 : snappedNode.width),
+      sourceId: '',
+    })
+  }
+  if (bestYDist < threshold && bestYSource) {
+    const refCenter = getNodeCenter(snappedNode)
+    const isCenter = bestYSource === 'centerY'
+    guides.push({
+      type: isCenter ? 'center' : 'edge',
+      axis: 'y',
+      value: isCenter ? refCenter.y : snappedNode.y + (bestYSource === 'top' ? 0 : snappedNode.height),
+      sourceId: '',
+    })
+  }
+
+  return { node: snappedNode, guides }
 }

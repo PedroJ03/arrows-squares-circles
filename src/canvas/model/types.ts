@@ -94,6 +94,31 @@ export type UiState = {
 // Snapping state
 export type SnappingState = { enabled: boolean }
 
+// Z-order direction
+export type ZOrderDirection = 'front' | 'back' | 'forward' | 'backward'
+
+// Snap alignment guide
+export type SnapGuide = {
+  type: 'edge' | 'center'
+  axis: 'x' | 'y'
+  value: number
+  sourceId: ShapeId
+}
+
+// Guide layer state
+export type GuideLayerState = {
+  visible: boolean
+  guides: SnapGuide[]
+}
+
+// Overlay state for floating UI
+export type OverlayState = {
+  floatingToolbar: { visible: boolean; anchorBounds: Bounds | null }
+  guideLayer: GuideLayerState
+  zoomControls: { visible: boolean }
+  minimap: { visible: boolean; width: number; height: number }
+}
+
 // Full canvas state
 export type CanvasState = {
   scene: Scene
@@ -102,6 +127,7 @@ export type CanvasState = {
   ui: UiState
   snapping: SnappingState
   defaults: StyleDefaults
+  overlay: OverlayState
 }
 
 // Anchor positions
@@ -134,6 +160,16 @@ export type CanvasAction =
   // UI
   | { type: 'tool/set'; tool: Tool }
   | { type: 'text/setPreset'; fontSize: TextFontSize }
+  // Z-order
+  | { type: 'scene/reorder'; ids: ShapeId[]; direction: ZOrderDirection }
+  // View
+  | { type: 'view/setZoom'; zoom: number; anchor?: Point }
+  | { type: 'view/fit' }
+  // Overlay
+  | { type: 'overlay/setToolbar'; visible: boolean; anchorBounds: Bounds | null }
+  | { type: 'overlay/setGuideLayer'; visible: boolean; guides?: SnapGuide[] }
+  | { type: 'overlay/setZoomControls'; visible: boolean }
+  | { type: 'overlay/setMinimap'; visible: boolean }
 
 // Legacy types for migration compatibility
 export type NodeType = 'rectangle' | 'ellipse'

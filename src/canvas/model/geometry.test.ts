@@ -8,6 +8,8 @@ import {
   getMarqueeIntersectingIds,
   getRotateHandlePoint,
   getArrowBounds,
+  getSceneBounds,
+  fitViewToContent,
   ROTATE_HANDLE_GAP,
 } from './geometry'
 
@@ -207,5 +209,62 @@ describe('getArrowBounds', () => {
     expect(bounds.y).toBe(0)
     expect(bounds.width).toBe(100)
     expect(bounds.height).toBe(100)
+  })
+})
+
+describe('getSceneBounds', () => {
+  it('returns null for empty scene', () => {
+    const scene: Scene = { byId: {}, order: [] }
+    expect(getSceneBounds(scene)).toBeNull()
+  })
+
+  it('returns bounds for single shape', () => {
+    const scene: Scene = {
+      byId: { n1: { id: 'n1', type: 'rectangle', x: 10, y: 20, width: 80, height: 40, rotation: 0 } },
+      order: ['n1'],
+    }
+    const bounds = getSceneBounds(scene)
+    expect(bounds).toEqual({ x: 10, y: 20, width: 80, height: 40 })
+  })
+
+  it('returns combined bounds for multiple shapes', () => {
+    const scene: Scene = {
+      byId: {
+        n1: { id: 'n1', type: 'rectangle', x: 0, y: 0, width: 50, height: 50, rotation: 0 },
+        n2: { id: 'n2', type: 'rectangle', x: 100, y: 200, width: 30, height: 20, rotation: 0 },
+      },
+      order: ['n1', 'n2'],
+    }
+    const bounds = getSceneBounds(scene)
+    expect(bounds?.x).toBe(0)
+    expect(bounds?.y).toBe(0)
+    expect(bounds?.width).toBe(130)
+    expect(bounds?.height).toBe(220)
+  })
+})
+
+describe('fitViewToContent', () => {
+  it('computes zoom/pan to fit content in viewport', () => {
+    const bounds = { x: 0, y: 0, width: 800, height: 600 }
+    const result = fitViewToContent(bounds, 800, 600, 40)
+    // Zoom fits content with padding, not 1:1
+    expect(result.zoom).toBeGreaterThan(0)
+    expect(result.zoom).toBeLessThan(1)
+    // Pan should center with padding
+    expect(result.pan.x).toBeGreaterThan(0)
+    expect(result.pan.y).toBeGreaterThan(0)
+  })
+
+  it('scales down when content is larger than viewport', () => {
+    const bounds = { x: 0, y: 0, width: 1600, height: 1200 }
+    const result = fitViewToContent(bounds, 800, 600, 40)
+    expect(result.zoom).toBeLessThan(1)
+    expect(result.zoom).toBeGreaterThan(0)
+  })
+
+  it('respects max zoom cap of 4', () => {
+    const bounds = { x: 0, y: 0, width: 100, height: 100 }
+    const result = fitViewToContent(bounds, 800, 600, 40)
+    expect(result.zoom).toBeLessThanOrEqual(4)
   })
 })
