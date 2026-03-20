@@ -113,6 +113,21 @@ export const getArrowPoints = (arrow: Arrow, scene: Scene): { start: Point; end:
   end: resolveEndpoint(arrow.end, scene),
 })
 
+export const getElbowPath = (start: Point, end: Point): Point[] => {
+  if (start.x === end.x || start.y === end.y) {
+    return [start, end]
+  }
+  return [start, { x: end.x, y: start.y }, end]
+}
+
+export const getArrowPathPoints = (arrow: Arrow, scene: Scene): Point[] => {
+  const { start, end } = getArrowPoints(arrow, scene)
+  if (arrow.arrowStyle === 'elbow') {
+    return getElbowPath(start, end)
+  }
+  return [start, end]
+}
+
 export const hitTestNode = (point: Point, node: Node): boolean => {
   const center = getNodeCenter(node)
   const local = inverseRotatePoint(point, center, node.rotation)
@@ -132,8 +147,11 @@ export const hitTestNode = (point: Point, node: Node): boolean => {
 }
 
 export const hitTestArrow = (point: Point, arrow: Arrow, scene: Scene): boolean => {
-  const { start, end } = getArrowPoints(arrow, scene)
-  return distanceToSegment(point, start, end) <= 6
+  const points = getArrowPathPoints(arrow, scene)
+  for (let i = 0; i < points.length - 1; i += 1) {
+    if (distanceToSegment(point, points[i], points[i + 1]) <= 6) return true
+  }
+  return false
 }
 
 export const hitTestScene = (point: Point, scene: Scene): string | null => {

@@ -9,6 +9,16 @@ export type ViewState = {
 
 export type NodeType = 'square' | 'circle'
 
+export type StrokeWidth = 1 | 2 | 4 | 8
+export type ArrowStyle = 'straight' | 'dashed' | 'elbow'
+export type StrokeColor = string
+
+export type StyleDefaults = {
+  strokeColor: StrokeColor
+  strokeWidth: StrokeWidth
+  arrowStyle: ArrowStyle
+}
+
 export type Node = {
   id: ShapeId
   type: NodeType
@@ -17,6 +27,8 @@ export type Node = {
   width: number
   height: number
   rotation: number
+  strokeColor?: StrokeColor
+  strokeWidth?: StrokeWidth
 }
 
 export type ArrowEndpoint =
@@ -28,6 +40,9 @@ export type Arrow = {
   type: 'arrow'
   start: ArrowEndpoint
   end: ArrowEndpoint
+  strokeColor?: StrokeColor
+  strokeWidth?: StrokeWidth
+  arrowStyle?: ArrowStyle
 }
 
 export type Scene = { nodes: Node[]; arrows: Arrow[] }
@@ -41,6 +56,7 @@ export type CanvasState = {
   view: ViewState
   selection: SelectionState
   snapping: SnappingState
+  defaults: StyleDefaults
 }
 
 export type Anchor = 'n' | 's' | 'e' | 'w' | 'center'
@@ -55,3 +71,4 @@ export type CanvasAction =
   | { type: 'view/zoom'; scale: number; anchor: Point }
   | { type: 'snapping/set'; enabled: boolean }
   | { type: 'scene/set'; scene: Scene }
+  | { type: 'defaults/set'; patch: Partial<StyleDefaults> }

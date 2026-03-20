@@ -59,4 +59,20 @@ describe('geometry', () => {
     expect(hitTestArrow({ x: 50, y: 2 }, arrow, scene)).toBe(true)
     expect(hitTestArrow({ x: 50, y: 12 }, arrow, scene)).toBe(false)
   })
+
+  it('computes elbow paths and hit-tests them', () => {
+    const arrow: Arrow = {
+      id: 'a1',
+      type: 'arrow',
+      start: { kind: 'free', x: 0, y: 0 },
+      end: { kind: 'free', x: 100, y: 100 },
+      arrowStyle: 'elbow',
+    }
+    const scene: Scene = { nodes: [], arrows: [arrow] }
+
+    // Path should be (0,0) -> (100, 0) -> (100, 100) based on current implementation
+    expect(hitTestArrow({ x: 50, y: 0 }, arrow, scene)).toBe(true)
+    expect(hitTestArrow({ x: 100, y: 50 }, arrow, scene)).toBe(true)
+    expect(hitTestArrow({ x: 50, y: 50 }, arrow, scene)).toBe(false)
+  })
 })

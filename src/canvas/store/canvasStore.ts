@@ -26,6 +26,11 @@ const createDefaultState = (): CanvasState => ({
   view: { pan: { x: 0, y: 0 }, zoom: 1 },
   selection: { id: null },
   snapping: { enabled: true },
+  defaults: {
+    strokeColor: '#2b2d42',
+    strokeWidth: 2,
+    arrowStyle: 'straight',
+  },
 })
 
 const updateScene = (scene: Scene, updater: (scene: Scene) => Scene): Scene => updater(scene)
@@ -96,6 +101,11 @@ const reducer = (state: CanvasState, action: CanvasAction): CanvasState => {
       return { ...state, snapping: { enabled: action.enabled } }
     case 'scene/set':
       return { ...state, scene: action.scene }
+    case 'defaults/set':
+      return {
+        ...state,
+        defaults: { ...state.defaults, ...action.patch },
+      }
     default:
       return state
   }

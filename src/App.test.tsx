@@ -389,4 +389,50 @@ describe('App integration', () => {
     expect(restored).toBeInTheDocument()
     localStorage.clear()
   })
+
+  it('updates selection styles via toolbar', () => {
+    const { container } = render(<App />)
+    const svg = container.querySelector('svg') as SVGSVGElement
+    mockSvgRect(svg)
+
+    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    const rect = container.querySelector('rect[data-id]') as SVGRectElement
+    const initialColor = rect.getAttribute('stroke')
+
+    // Select the rect
+    const rectX = Number(rect.getAttribute('x'))
+    const rectY = Number(rect.getAttribute('y'))
+    fireEvent.pointerDown(rect, {
+      clientX: rectX + 10,
+      clientY: rectY + 10,
+      pageX: rectX + 10,
+      pageY: rectY + 10,
+      button: 0,
+      pointerId: 101,
+    })
+    fireEvent.pointerUp(rect, { pointerId: 101 })
+
+    // Click the second color chip
+    const colorChips = container.querySelectorAll('.palette-chip')
+    fireEvent.click(colorChips[1])
+
+    const updatedRect = container.querySelector('rect[data-id]') as SVGRectElement
+    expect(updatedRect.getAttribute('stroke')).not.toBe(initialColor)
+
+    // Click a width button
+    fireEvent.click(screen.getByRole('button', { name: '4' }))
+    expect(updatedRect.getAttribute('stroke-width')).toBe('4')
+  })
+
+  it('updates default styles when no selection', () => {
+    const { container } = render(<App />)
+
+    // Set default width to 8
+    fireEvent.click(screen.getByRole('button', { name: '8' }))
+
+    // Add a square
+    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    const rect = container.querySelector('rect[data-id]') as SVGRectElement
+    expect(rect.getAttribute('stroke-width')).toBe('8')
+  })
 })

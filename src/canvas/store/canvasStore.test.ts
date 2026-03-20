@@ -50,3 +50,14 @@ describe('canvasStore history', () => {
     expect(store.getState().scene.nodes[0].y).toBe(20)
   })
 })
+
+describe('canvasStore defaults', () => {
+  it('initializes defaults and updates them', () => {
+    const store = createCanvasStore()
+    expect(store.getState().defaults.strokeColor).toBe('#2b2d42')
+
+    store.dispatch({ type: 'defaults/set', patch: { strokeWidth: 4 } })
+    expect(store.getState().defaults.strokeWidth).toBe(4)
+    expect(store.getState().defaults.strokeColor).toBe('#2b2d42')
+  })
+})

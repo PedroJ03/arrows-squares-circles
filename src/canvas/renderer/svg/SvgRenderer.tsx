@@ -1,13 +1,13 @@
 import { SelectionLayer } from '../../selection/selection'
-import { getArrowPoints, hitTestScene } from '../../model/geometry'
+import { getArrowPathPoints, hitTestScene } from '../../model/geometry'
 import type { CanvasState } from '../../model/types'
 import type { Renderer, RendererProps } from '../Renderer'
 
 const renderArrowPath = (state: CanvasState, arrowId: string) => {
   const arrow = state.scene.arrows.find((item) => item.id === arrowId)
   if (!arrow) return ''
-  const { start, end } = getArrowPoints(arrow, state.scene)
-  return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+  const points = getArrowPathPoints(arrow, state.scene)
+  return `M ${points[0].x} ${points[0].y} ` + points.slice(1).map((p) => `L ${p.x} ${p.y}`).join(' ')
 }
 
 export const SvgRenderer: Renderer = {
@@ -32,8 +32,9 @@ export const SvgRenderer: Renderer = {
             <path
               key={arrow.id}
               d={renderArrowPath(state, arrow.id)}
-              stroke="#2b2d42"
-              strokeWidth={2}
+              stroke={arrow.strokeColor ?? state.defaults.strokeColor}
+              strokeWidth={arrow.strokeWidth ?? state.defaults.strokeWidth}
+              strokeDasharray={arrow.arrowStyle === 'dashed' ? '6 4' : undefined}
               fill="none"
               markerEnd="url(#arrowhead)"
               data-id={arrow.id}
@@ -55,8 +56,8 @@ export const SvgRenderer: Renderer = {
                   height={node.height}
                   rx={10}
                   fill="#fff"
-                  stroke="#2b2d42"
-                  strokeWidth={2}
+                  stroke={node.strokeColor ?? state.defaults.strokeColor}
+                  strokeWidth={node.strokeWidth ?? state.defaults.strokeWidth}
                   transform={commonProps.transform}
                   data-id={node.id}
                 />
@@ -70,8 +71,8 @@ export const SvgRenderer: Renderer = {
                 rx={node.width / 2}
                 ry={node.height / 2}
                 fill="#fff"
-                stroke="#2b2d42"
-                strokeWidth={2}
+                stroke={node.strokeColor ?? state.defaults.strokeColor}
+                strokeWidth={node.strokeWidth ?? state.defaults.strokeWidth}
                 transform={commonProps.transform}
                 data-id={node.id}
               />
@@ -87,8 +88,9 @@ export const SvgRenderer: Renderer = {
             refX="10"
             refY="3.5"
             orient="auto"
+            markerUnits="strokeWidth"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#2b2d42" />
+            <polygon points="0 0, 10 3.5, 0 7" fill="context-stroke" />
           </marker>
         </defs>
       </svg>
