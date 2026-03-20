@@ -1,11 +1,11 @@
 import { SelectionLayer } from '../../selection/selection'
 import { getArrowPathPoints, hitTestScene } from '../../model/geometry'
-import type { CanvasState } from '../../model/types'
+import type { CanvasState, TextObject } from '../../model/types'
 import type { Renderer, RendererProps } from '../Renderer'
 
 const renderArrowPath = (state: CanvasState, arrowId: string) => {
-  const arrow = state.scene.arrows.find((item) => item.id === arrowId)
-  if (!arrow) return ''
+  const arrow = state.scene.byId[arrowId]
+  if (!arrow || arrow.type !== 'arrow') return ''
   const points = getArrowPathPoints(arrow, state.scene)
   return `M ${points[0].x} ${points[0].y} ` + points.slice(1).map((p) => `L ${p.x} ${p.y}`).join(' ')
 }
@@ -13,6 +13,8 @@ const renderArrowPath = (state: CanvasState, arrowId: string) => {
 export const SvgRenderer: Renderer = {
   render: ({ state, svgRef, onPointerDown, onPointerMove, onPointerUp, onPointerLeave, onWheel, onContextMenu }: RendererProps) => {
     const { pan, zoom } = state.view
+    const { byId, order } = state.scene
+    
     return (
       <svg
         ref={svgRef}
@@ -28,55 +30,80 @@ export const SvgRenderer: Renderer = {
       >
         <rect width="100%" height="100%" fill="transparent" data-ui="true" />
         <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
-          {state.scene.arrows.map((arrow) => (
-            <path
-              key={arrow.id}
-              d={renderArrowPath(state, arrow.id)}
-              stroke={arrow.strokeColor ?? state.defaults.strokeColor}
-              strokeWidth={arrow.strokeWidth ?? state.defaults.strokeWidth}
-              strokeDasharray={arrow.arrowStyle === 'dashed' ? '6 4' : undefined}
-              fill="none"
-              markerEnd="url(#arrowhead)"
-              data-id={arrow.id}
-            />
-          ))}
-          {state.scene.nodes.map((node) => {
-            const commonProps = {
-              key: node.id,
-              transform: `rotate(${(node.rotation * 180) / Math.PI}, ${node.x + node.width / 2}, ${node.y + node.height / 2})`,
-              dataId: node.id,
-            }
-            if (node.type === 'square') {
+          {/* Render all objects in order */}
+          {order.map((id) => {
+            const obj = byId[id]
+            if (!obj) return null
+            
+            if (obj.type === 'arrow') {
               return (
-                <rect
-                  key={node.id}
-                  x={node.x}
-                  y={node.y}
-                  width={node.width}
-                  height={node.height}
-                  rx={10}
-                  fill="#fff"
-                  stroke={node.strokeColor ?? state.defaults.strokeColor}
-                  strokeWidth={node.strokeWidth ?? state.defaults.strokeWidth}
-                  transform={commonProps.transform}
-                  data-id={node.id}
+                <path
+                  key={obj.id}
+                  d={renderArrowPath(state, obj.id)}
+                  stroke={obj.strokeColor ?? state.defaults.strokeColor}
+                  strokeWidth={obj.strokeWidth ?? state.defaults.strokeWidth}
+                  strokeDasharray={obj.arrowStyle === 'dashed' ? '6 4' : undefined}
+                  fill="none"
+                  markerEnd="url(#arrowhead)"
+                  data-id={obj.id}
                 />
               )
             }
-            return (
-              <ellipse
-                key={node.id}
-                cx={node.x + node.width / 2}
-                cy={node.y + node.height / 2}
-                rx={node.width / 2}
-                ry={node.height / 2}
-                fill="#fff"
-                stroke={node.strokeColor ?? state.defaults.strokeColor}
-                strokeWidth={node.strokeWidth ?? state.defaults.strokeWidth}
-                transform={commonProps.transform}
-                data-id={node.id}
-              />
-            )
+            
+            if (obj.type === 'rectangle') {
+              return (
+                <rect
+                  key={obj.id}
+                  x={obj.x}
+                  y={obj.y}
+                  width={obj.width}
+                  height={obj.height}
+                  rx={10}
+                  fill={obj.fillColor ?? state.defaults.fillColor}
+                  stroke={obj.strokeColor ?? state.defaults.strokeColor}
+                  strokeWidth={obj.strokeWidth ?? state.defaults.strokeWidth}
+                  transform={`rotate(${(obj.rotation * 180) / Math.PI}, ${obj.x + obj.width / 2}, ${obj.y + obj.height / 2})`}
+                  data-id={obj.id}
+                />
+              )
+            }
+            
+            if (obj.type === 'ellipse') {
+              return (
+                <ellipse
+                  key={obj.id}
+                  cx={obj.x + obj.width / 2}
+                  cy={obj.y + obj.height / 2}
+                  rx={obj.width / 2}
+                  ry={obj.height / 2}
+                  fill={obj.fillColor ?? state.defaults.fillColor}
+                  stroke={obj.strokeColor ?? state.defaults.strokeColor}
+                  strokeWidth={obj.strokeWidth ?? state.defaults.strokeWidth}
+                  transform={`rotate(${(obj.rotation * 180) / Math.PI}, ${obj.x + obj.width / 2}, ${obj.y + obj.height / 2})`}
+                  data-id={obj.id}
+                />
+              )
+            }
+            
+            if (obj.type === 'text') {
+              const textObj = obj as TextObject
+              return (
+                <text
+                  key={obj.id}
+                  x={textObj.x}
+                  y={textObj.y}
+                  fill={textObj.strokeColor ?? state.defaults.strokeColor}
+                  fontSize={textObj.fontSize ?? 24}
+                  transform={textObj.rotation !== 0 ? `rotate(${(textObj.rotation * 180) / Math.PI}, ${textObj.x}, ${textObj.y})` : undefined}
+                  data-id={obj.id}
+                  data-ui="text"
+                >
+                  {textObj.content}
+                </text>
+              )
+            }
+            
+            return null
           })}
           <SelectionLayer state={state} />
         </g>

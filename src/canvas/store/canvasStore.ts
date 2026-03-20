@@ -1,4 +1,4 @@
-import type { CanvasAction, CanvasState, Scene } from '../model/types'
+import type { CanvasAction, CanvasObject, CanvasState, StyleDefaults } from '../model/types'
 import {
   commitHistory,
   createHistory,
@@ -21,62 +21,106 @@ export type CanvasStore = {
   redo: () => void
 }
 
-const createDefaultState = (): CanvasState => ({
-  scene: { nodes: [], arrows: [] },
-  view: { pan: { x: 0, y: 0 }, zoom: 1 },
-  selection: { id: null },
-  snapping: { enabled: true },
-  defaults: {
-    strokeColor: '#2b2d42',
-    strokeWidth: 2,
-    arrowStyle: 'straight',
-  },
-})
+const defaultDefaults: StyleDefaults = {
+  strokeColor: '#2b2d42',
+  strokeWidth: 2,
+  arrowStyle: 'straight',
+  fillColor: 'transparent',
+  textFontSize: 24,
+}
 
-const updateScene = (scene: Scene, updater: (scene: Scene) => Scene): Scene => updater(scene)
+const createDefaultState = (): CanvasState => ({
+  scene: { byId: {}, order: [] },
+  view: { pan: { x: 0, y: 0 }, zoom: 1 },
+  selection: { ids: [], primaryId: null, marquee: null, editingTextId: null },
+  ui: { tool: 'pointer', textFontSize: 24 },
+  snapping: { enabled: true },
+  defaults: defaultDefaults,
+})
 
 const reducer = (state: CanvasState, action: CanvasAction): CanvasState => {
   switch (action.type) {
-    case 'node/add':
+    case 'object/add':
       return {
         ...state,
-        scene: updateScene(state.scene, (scene) => ({
-          ...scene,
-          nodes: [...scene.nodes, action.node],
-        })),
-        selection: { id: action.node.id },
+        scene: {
+          ...state.scene,
+          byId: { ...state.scene.byId, [action.object.id]: action.object },
+          order: [...state.scene.order, action.object.id],
+        },
+        selection: { 
+          ...state.selection, 
+          ids: state.ui.tool === 'pointer' ? state.selection.ids : [action.object.id],
+          primaryId: action.object.id 
+        },
       }
-    case 'node/update':
+    case 'object/update': {
+      const existing = state.scene.byId[action.id]
+      if (!existing) return state
       return {
         ...state,
-        scene: updateScene(state.scene, (scene) => ({
-          ...scene,
-          nodes: scene.nodes.map((node) =>
-            node.id === action.id ? { ...node, ...action.patch } : node,
-          ),
-        })),
+        scene: {
+          ...state.scene,
+          byId: { ...state.scene.byId, [action.id]: { ...existing, ...action.patch } as CanvasObject },
+        },
       }
-    case 'arrow/add':
+    }
+    case 'objects/updateMany': {
+      const newById = { ...state.scene.byId }
+      for (const id of action.ids) {
+        const existing = newById[id]
+        if (existing) {
+          newById[id] = { ...existing, ...action.patch } as CanvasObject
+        }
+      }
       return {
         ...state,
-        scene: updateScene(state.scene, (scene) => ({
-          ...scene,
-          arrows: [...scene.arrows, action.arrow],
-        })),
-        selection: { id: action.arrow.id },
+        scene: { ...state.scene, byId: newById },
       }
-    case 'arrow/update':
+    }
+    case 'objects/deleteMany': {
+      const idsToDelete = new Set(action.ids)
+      const newById = { ...state.scene.byId }
+      for (const id of action.ids) {
+        delete newById[id]
+      }
+      const newOrder = state.scene.order.filter((id) => !idsToDelete.has(id))
       return {
         ...state,
-        scene: updateScene(state.scene, (scene) => ({
-          ...scene,
-          arrows: scene.arrows.map((arrow) =>
-            arrow.id === action.id ? { ...arrow, ...action.patch } : arrow,
-          ),
-        })),
+        scene: { byId: newById, order: newOrder },
+        selection: { ids: [], primaryId: null, marquee: null, editingTextId: null },
       }
+    }
     case 'selection/set':
-      return { ...state, selection: { id: action.id } }
+      return { 
+        ...state, 
+        selection: { 
+          ...state.selection, 
+          ids: action.id ? [action.id] : [], 
+          primaryId: action.id,
+          marquee: null,
+        } 
+      }
+    case 'selection/setMany':
+      return { 
+        ...state, 
+        selection: { 
+          ...state.selection, 
+          ids: action.ids, 
+          primaryId: action.ids[0] ?? null,
+          marquee: null,
+        } 
+      }
+    case 'selection/setMarquee':
+      return { 
+        ...state, 
+        selection: { ...state.selection, marquee: action.bounds } 
+      }
+    case 'selection/setEditingText':
+      return { 
+        ...state, 
+        selection: { ...state.selection, editingTextId: action.id } 
+      }
     case 'view/pan':
       return {
         ...state,
@@ -105,6 +149,17 @@ const reducer = (state: CanvasState, action: CanvasAction): CanvasState => {
       return {
         ...state,
         defaults: { ...state.defaults, ...action.patch },
+      }
+    case 'tool/set':
+      return {
+        ...state,
+        ui: { ...state.ui, tool: action.tool },
+      }
+    case 'text/setPreset':
+      return {
+        ...state,
+        ui: { ...state.ui, textFontSize: action.fontSize },
+        defaults: { ...state.defaults, textFontSize: action.fontSize },
       }
     default:
       return state

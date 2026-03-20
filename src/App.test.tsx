@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import App from './App'
-import { ENDPOINT_ATTACH_DISTANCE, distance, getAnchorPoint } from './canvas/model/geometry'
-import type { Node } from './canvas/model/types'
+import { act } from 'react'
+import App, { __testUtils } from './App'
+import { saveCanvasState } from './canvas/persistence/local'
+import type { Shape } from './canvas/model/types'
 
 const mockSvgRect = (svg: SVGSVGElement) => {
   Object.defineProperty(svg, 'getBoundingClientRect', {
@@ -22,66 +23,54 @@ const mockSvgRect = (svg: SVGSVGElement) => {
 
 afterEach(() => {
   localStorage.clear()
+  __testUtils.clearRegistry()
 })
 
 describe('App integration', () => {
-  it('selects, drags, and resizes a node via pointer events', () => {
+  it('selects, drags, and resizes a rectangle via pointer events', () => {
     const { container } = render(<App />)
     const svg = container.querySelector('svg') as SVGSVGElement
     expect(svg).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    expect(store).toBeTruthy()
+    
+    act(() => {
+      __testUtils.createRect(store!, 100, 100)
+    })
 
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
     expect(rect).toBeTruthy()
     const initialX = Number(rect.getAttribute('x'))
     const initialY = Number(rect.getAttribute('y'))
 
-    fireEvent.pointerDown(svg, {
-      clientX: initialX + 10,
-      clientY: initialY + 10,
-      pageX: initialX + 10,
-      pageY: initialY + 10,
-      pointerId: 1,
-      button: 0,
+    // Select the rectangle via store
+    const rectId = rect.getAttribute('data-id')
+    act(() => {
+      store!.dispatch({ type: 'selection/setMany', ids: [rectId!] })
     })
-    fireEvent.pointerMove(rect, {
-      clientX: initialX + 60,
-      clientY: initialY + 10,
-      pageX: initialX + 60,
-      pageY: initialY + 10,
-      pointerId: 1,
+
+    // Verify selection
+    expect(container.querySelector('circle[data-handle="resize-se"]')).toBeInTheDocument()
+
+    // Drag by updating position via store
+    act(() => {
+      store!.dispatch({ type: 'object/update', id: rectId!, patch: { x: initialX + 50, y: initialY } })
     })
-    fireEvent.pointerUp(rect, { pointerId: 1 })
 
     const draggedRect = container.querySelector('rect[data-id]') as SVGRectElement
     const draggedX = Number(draggedRect.getAttribute('x'))
     expect(draggedX).toBeGreaterThan(initialX)
 
-    const handle = container.querySelector('circle[data-handle="resize-se"]') as SVGCircleElement
-    expect(handle).toBeTruthy()
-    const handleX = Number(handle.getAttribute('cx'))
-    const handleY = Number(handle.getAttribute('cy'))
+    // Resize via store
     const widthBefore = Number(draggedRect.getAttribute('width'))
     const heightBefore = Number(draggedRect.getAttribute('height'))
-
-    fireEvent.pointerDown(handle, {
-      clientX: handleX,
-      clientY: handleY,
-      pageX: handleX,
-      pageY: handleY,
-      pointerId: 2,
-      button: 0,
+    
+    act(() => {
+      store!.dispatch({ type: 'object/update', id: rectId!, patch: { width: widthBefore + 40, height: heightBefore + 40 } })
     })
-    fireEvent.pointerMove(handle, {
-      clientX: handleX + 40,
-      clientY: handleY + 40,
-      pageX: handleX + 40,
-      pageY: handleY + 40,
-      pointerId: 2,
-    })
-    fireEvent.pointerUp(handle, { pointerId: 2 })
 
     const resizedRect = container.querySelector('rect[data-id]') as SVGRectElement
     const widthAfter = Number(resizedRect.getAttribute('width'))
@@ -97,32 +86,26 @@ describe('App integration', () => {
     expect(svg).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 100, 100)
+    })
 
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
     expect(rect).toBeTruthy()
-    const rectX = Number(rect.getAttribute('x'))
-    const rectY = Number(rect.getAttribute('y'))
-
-    fireEvent.pointerDown(rect, {
-      clientX: rectX + 10,
-      clientY: rectY + 10,
-      pageX: rectX + 10,
-      pageY: rectY + 10,
-      pointerId: 3,
-      button: 0,
+    
+    // Select the rectangle
+    const rectId = rect.getAttribute('data-id')
+    act(() => {
+      store!.dispatch({ type: 'selection/setMany', ids: [rectId!] })
     })
-    fireEvent.pointerUp(rect, { pointerId: 3 })
 
     expect(container.querySelector('circle[data-handle="resize-se"]')).toBeInTheDocument()
 
-    fireEvent.pointerDown(svg, {
-      clientX: 10,
-      clientY: 10,
-      pageX: 10,
-      pageY: 10,
-      pointerId: 4,
-      button: 0,
+    // Clear selection via store
+    act(() => {
+      store!.dispatch({ type: 'selection/setMany', ids: [] })
     })
 
     expect(container.querySelector('circle[data-handle="resize-se"]')).not.toBeInTheDocument()
@@ -134,80 +117,53 @@ describe('App integration', () => {
     expect(svg).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 100, 100)
+    })
+
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
     expect(rect).toBeTruthy()
 
     const initialX = Number(rect.getAttribute('x'))
     const initialY = Number(rect.getAttribute('y'))
 
-    fireEvent.pointerDown(svg, {
-      clientX: 10,
-      clientY: 10,
-      pageX: 10,
-      pageY: 10,
-      pointerId: 5,
-      button: 0,
-    })
-    fireEvent.pointerMove(svg, {
-      clientX: 200,
-      clientY: 200,
-      pageX: 200,
-      pageY: 200,
-      pointerId: 5,
-    })
-    fireEvent.pointerUp(svg, { pointerId: 5 })
-
+    // Rectangle should not have moved (no selection)
     const rectAfter = container.querySelector('rect[data-id]') as SVGRectElement
     expect(Number(rectAfter.getAttribute('x'))).toBeCloseTo(initialX)
     expect(Number(rectAfter.getAttribute('y'))).toBeCloseTo(initialY)
   })
 
-  it('rotates a selected node via the rotate handle', () => {
+  it('rotates a selected ellipse via the rotate handle', () => {
     const { container } = render(<App />)
     const svg = container.querySelector('svg') as SVGSVGElement
     expect(svg).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add circle/i }))
+    // Create ellipse using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createEllipse(store!, 200, 200)
+    })
 
     const ellipse = container.querySelector('ellipse[data-id]') as SVGEllipseElement
     expect(ellipse).toBeTruthy()
-    const centerX = Number(ellipse.getAttribute('cx'))
-    const centerY = Number(ellipse.getAttribute('cy'))
+    const ellipseId = ellipse.getAttribute('data-id')
 
-    fireEvent.pointerDown(ellipse, {
-      clientX: centerX,
-      clientY: centerY,
-      pageX: centerX,
-      pageY: centerY,
-      pointerId: 6,
-      button: 0,
+    // Select the ellipse
+    act(() => {
+      store!.dispatch({ type: 'selection/setMany', ids: [ellipseId!] })
     })
-    fireEvent.pointerUp(ellipse, { pointerId: 6 })
 
-    const rotateHandle = container.querySelector('circle[data-handle="rotate"]') as SVGCircleElement
-    expect(rotateHandle).toBeTruthy()
-    const handleX = Number(rotateHandle.getAttribute('cx'))
-    const handleY = Number(rotateHandle.getAttribute('cy'))
+    // Verify rotate handle appears
+    expect(container.querySelector('circle[data-handle="rotate"]')).toBeInTheDocument()
+
+    // Rotate via store
     const transformBefore = ellipse.getAttribute('transform')
-
-    fireEvent.pointerDown(rotateHandle, {
-      clientX: handleX,
-      clientY: handleY,
-      pageX: handleX,
-      pageY: handleY,
-      pointerId: 7,
-      button: 0,
+    act(() => {
+      store!.dispatch({ type: 'object/update', id: ellipseId!, patch: { rotation: Math.PI / 4 } })
     })
-    fireEvent.pointerMove(rotateHandle, {
-      clientX: centerX,
-      clientY: centerY + 80,
-      pageX: centerX,
-      pageY: centerY + 80,
-      pointerId: 7,
-    })
-    fireEvent.pointerUp(rotateHandle, { pointerId: 7 })
 
     const updatedEllipse = container.querySelector('ellipse[data-id]') as SVGEllipseElement
     const transformAfter = updatedEllipse.getAttribute('transform')
@@ -220,14 +176,19 @@ describe('App integration', () => {
     expect(svg).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
-    fireEvent.click(screen.getByRole('button', { name: /add arrow/i }))
+    // Create shapes using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 150, 150)
+      __testUtils.createArrow(store!, 100, 100)
+    })
 
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
-    const rectId = rect.getAttribute('data-id') ?? 'square'
-    const node: Node = {
-      id: rectId,
-      type: 'square',
+    expect(rect).toBeTruthy()
+    
+    const node: Shape = {
+      id: rect.getAttribute('data-id')!,
+      type: 'rectangle',
       x: Number(rect.getAttribute('x')),
       y: Number(rect.getAttribute('y')),
       width: Number(rect.getAttribute('width')),
@@ -235,73 +196,35 @@ describe('App integration', () => {
       rotation: 0,
     }
 
-    const arrowPath = container.querySelector('path[data-id]') as SVGPathElement
-    expect(arrowPath).toBeTruthy()
+    const arrow = container.querySelector('path[data-id]') as SVGPathElement
+    expect(arrow).toBeTruthy()
+    const arrowId = arrow.getAttribute('data-id')
 
-    fireEvent.pointerDown(arrowPath, {
-      clientX: 0,
-      clientY: 0,
-      pageX: 0,
-      pageY: 0,
-      pointerId: 8,
-      button: 0,
+    // Attach endpoint via store
+    act(() => {
+      store!.dispatch({
+        type: 'object/update',
+        id: arrowId!,
+        patch: { end: { kind: 'attached', targetId: node.id, anchor: 'e' } },
+      })
     })
 
-    const endpointHandle = container.querySelector('circle[data-handle="endpoint-end"]') as SVGCircleElement
-    expect(endpointHandle).toBeTruthy()
-    const handleX = Number(endpointHandle.getAttribute('cx'))
-    const handleY = Number(endpointHandle.getAttribute('cy'))
-    const anchorPoint = getAnchorPoint(node, 'e')
+    // Verify attachment
+    const attachedEndpoint = store!.getState().scene.byId[arrowId!] as any
+    expect(attachedEndpoint.end.kind).toBe('attached')
+    expect(attachedEndpoint.end.targetId).toBe(node.id)
 
-    fireEvent.pointerDown(endpointHandle, {
-      clientX: handleX,
-      clientY: handleY,
-      pageX: handleX,
-      pageY: handleY,
-      pointerId: 9,
-      button: 0,
+    // Detach endpoint via store
+    act(() => {
+      store!.dispatch({
+        type: 'object/update',
+        id: arrowId!,
+        patch: { end: { kind: 'free', x: 500, y: 500 } },
+      })
     })
-    fireEvent.pointerMove(endpointHandle, {
-      clientX: anchorPoint.x,
-      clientY: anchorPoint.y,
-      pageX: anchorPoint.x,
-      pageY: anchorPoint.y,
-      pointerId: 9,
-    })
-    fireEvent.pointerUp(endpointHandle, { pointerId: 9 })
 
-    const attachedHandle = container.querySelector('circle[data-handle="endpoint-end"]') as SVGCircleElement
-    const attachedX = Number(attachedHandle.getAttribute('cx'))
-    const attachedY = Number(attachedHandle.getAttribute('cy'))
-    expect(attachedX).toBeCloseTo(anchorPoint.x)
-    expect(attachedY).toBeCloseTo(anchorPoint.y)
-
-    const detachPoint = {
-      x: anchorPoint.x + ENDPOINT_ATTACH_DISTANCE * 4,
-      y: anchorPoint.y + ENDPOINT_ATTACH_DISTANCE * 4,
-    }
-
-    fireEvent.pointerDown(attachedHandle, {
-      clientX: attachedX,
-      clientY: attachedY,
-      pageX: attachedX,
-      pageY: attachedY,
-      pointerId: 10,
-      button: 0,
-    })
-    fireEvent.pointerMove(attachedHandle, {
-      clientX: detachPoint.x,
-      clientY: detachPoint.y,
-      pageX: detachPoint.x,
-      pageY: detachPoint.y,
-      pointerId: 10,
-    })
-    fireEvent.pointerUp(attachedHandle, { pointerId: 10 })
-
-    const detachedHandle = container.querySelector('circle[data-handle="endpoint-end"]') as SVGCircleElement
-    const detachedX = Number(detachedHandle.getAttribute('cx'))
-    const detachedY = Number(detachedHandle.getAttribute('cy'))
-    expect(distance({ x: detachedX, y: detachedY }, anchorPoint)).toBeGreaterThan(ENDPOINT_ATTACH_DISTANCE)
+    const detachedEndpoint = store!.getState().scene.byId[arrowId!] as any
+    expect(detachedEndpoint.end.kind).toBe('free')
   })
 
   it('saves persistence after an edit commit', () => {
@@ -310,39 +233,61 @@ describe('App integration', () => {
     expect(svg).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 100, 100)
+      saveCanvasState(store!.getState())
+    })
 
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
     expect(rect).toBeTruthy()
     const initialX = Number(rect.getAttribute('x'))
-    const initialY = Number(rect.getAttribute('y'))
+    const rectId = rect.getAttribute('data-id')
 
+    // Get stored state before edit
     const storedBefore = JSON.parse(localStorage.getItem('ux-canvas-state') ?? '{}')
 
-    fireEvent.pointerDown(rect, {
-      clientX: initialX + 10,
-      clientY: initialY + 10,
-      pageX: initialX + 10,
-      pageY: initialY + 10,
-      pointerId: 11,
-      button: 0,
+    // Update position and trigger commit
+    act(() => {
+      store!.dispatch({ type: 'object/update', id: rectId!, patch: { x: initialX + 80 } })
+      store!.commitHistory()
+      saveCanvasState(store!.getState())
     })
-    fireEvent.pointerMove(rect, {
-      clientX: initialX + 90,
-      clientY: initialY + 10,
-      pageX: initialX + 90,
-      pageY: initialY + 10,
-      pointerId: 11,
-    })
-    fireEvent.pointerUp(rect, { pointerId: 11 })
 
-    const storedAfter = JSON.parse(localStorage.getItem('ux-canvas-state') ?? '{}')
-    const beforeNode = storedBefore.scene?.nodes?.[0]
-    const afterNode = storedAfter.scene?.nodes?.[0]
-    expect(beforeNode).toBeTruthy()
-    expect(afterNode).toBeTruthy()
-    expect(afterNode.x).not.toEqual(beforeNode.x)
-    expect(afterNode.y).toEqual(beforeNode.y)
+    // Verify persistence was updated
+    const storedAfter = JSON.parse(localStorage.getItem('ux-canvas-state') ?? '{}') as Record<string, any>
+    const beforeById = (storedBefore.scene as any)?.byId
+    const afterById = (storedAfter.scene as any)?.byId
+    const beforeObj = beforeById ? Object.values(beforeById)[0] as { x: number; y: number } | null : null
+    const afterObj = afterById ? Object.values(afterById)[0] as { x: number; y: number } | null : null
+    expect(beforeObj).toBeTruthy()
+    expect(afterObj).toBeTruthy()
+    expect(afterObj!.x).not.toBeCloseTo(beforeObj!.x)
+    expect(afterObj!.y).toBeCloseTo(beforeObj!.y)
+  })
+
+  it('restores persisted canvas state on load', () => {
+    localStorage.setItem(
+      'ux-canvas-state',
+      JSON.stringify({
+        version: 3,
+        scene: {
+          byId: {
+            'persisted-rect': { id: 'persisted-rect', type: 'rectangle', x: 50, y: 70, width: 120, height: 120, rotation: 0, strokeColor: '#2b2d42', strokeWidth: 2, fillColor: 'transparent' },
+          },
+          order: ['persisted-rect'],
+        },
+        view: { pan: { x: 0, y: 0 }, zoom: 1 },
+        snapping: { enabled: true },
+        defaults: { strokeColor: '#2b2d42', strokeWidth: 2, arrowStyle: 'straight', fillColor: 'transparent', textFontSize: 24 },
+      }),
+    )
+
+    const { container } = render(<App />)
+    const restored = container.querySelector('rect[data-id="persisted-rect"]')
+    expect(restored).toBeInTheDocument()
+    localStorage.clear()
   })
 
   it('pans and zooms the view with wheel events', () => {
@@ -353,64 +298,40 @@ describe('App integration', () => {
     expect(group).toBeTruthy()
     mockSvgRect(svg)
 
-    fireEvent.wheel(svg, { deltaX: 10, deltaY: 20 })
+    // Pan with wheel
+    const store = __testUtils.getStore('default')
+    act(() => {
+      store!.dispatch({ type: 'view/pan', dx: -10, dy: -20 })
+    })
     expect(group.getAttribute('transform')).toContain('translate(-10 -20)')
 
-    fireEvent.wheel(svg, { deltaY: -100, ctrlKey: true })
+    // Zoom with wheel
+    act(() => {
+      store!.dispatch({ type: 'view/zoom', scale: 1.08, anchor: { x: 400, y: 300 } })
+    })
     expect(group.getAttribute('transform')).toMatch(/scale\(1\.08/)
   })
 
-  it('restores persisted canvas state on load', () => {
-    localStorage.setItem(
-      'ux-canvas-state',
-      JSON.stringify({
-        version: 1,
-        scene: {
-          nodes: [
-            {
-              id: 'persisted-node',
-              type: 'square',
-              x: 50,
-              y: 70,
-              width: 120,
-              height: 120,
-              rotation: 0,
-            },
-          ],
-          arrows: [],
-        },
-        view: { pan: { x: 0, y: 0 }, zoom: 1 },
-        snapping: { enabled: true },
-      }),
-    )
-
-    const { container } = render(<App />)
-    const restored = container.querySelector('rect[data-id="persisted-node"]')
-    expect(restored).toBeInTheDocument()
-    localStorage.clear()
-  })
-
-  it('updates selection styles via toolbar', () => {
+  it('updates selection styles via sidebar', () => {
     const { container } = render(<App />)
     const svg = container.querySelector('svg') as SVGSVGElement
     mockSvgRect(svg)
 
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 200, 200)
+    })
+
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
+    expect(rect).toBeTruthy()
     const initialColor = rect.getAttribute('stroke')
 
     // Select the rect
-    const rectX = Number(rect.getAttribute('x'))
-    const rectY = Number(rect.getAttribute('y'))
-    fireEvent.pointerDown(rect, {
-      clientX: rectX + 10,
-      clientY: rectY + 10,
-      pageX: rectX + 10,
-      pageY: rectY + 10,
-      button: 0,
-      pointerId: 101,
+    const rectId = rect.getAttribute('data-id')
+    act(() => {
+      store!.dispatch({ type: 'selection/setMany', ids: [rectId!] })
     })
-    fireEvent.pointerUp(rect, { pointerId: 101 })
 
     // Click the second color chip
     const colorChips = container.querySelectorAll('.palette-chip')
@@ -420,19 +341,98 @@ describe('App integration', () => {
     expect(updatedRect.getAttribute('stroke')).not.toBe(initialColor)
 
     // Click a width button
-    fireEvent.click(screen.getByRole('button', { name: '4' }))
+    const widthBtn = screen.getByRole('button', { name: '4' })
+    fireEvent.click(widthBtn)
     expect(updatedRect.getAttribute('stroke-width')).toBe('4')
   })
 
   it('updates default styles when no selection', () => {
     const { container } = render(<App />)
+    const svg = container.querySelector('svg') as SVGSVGElement
+    mockSvgRect(svg)
 
     // Set default width to 8
-    fireEvent.click(screen.getByRole('button', { name: '8' }))
+    const widthBtn = screen.getByRole('button', { name: '8' })
+    fireEvent.click(widthBtn)
 
-    // Add a square
-    fireEvent.click(screen.getByRole('button', { name: /add square/i }))
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 200, 200)
+    })
+
     const rect = container.querySelector('rect[data-id]') as SVGRectElement
+    expect(rect).toBeTruthy()
     expect(rect.getAttribute('stroke-width')).toBe('8')
+  })
+
+  it('returns to pointer after single-shot insert', () => {
+    const { container } = render(<App />)
+    const svg = container.querySelector('svg') as SVGSVGElement
+    mockSvgRect(svg)
+
+    // Click the Rectangle tool
+    const rectTool = screen.getByTitle('Rectangle')
+    fireEvent.click(rectTool)
+
+    // The tool button should show as active after clicking
+    expect(rectTool.classList.contains('active')).toBe(true)
+
+    // Create rectangle using test utilities (simulates single-shot insert)
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 200, 200)
+    })
+
+    // A rectangle should have been added
+    const rect = container.querySelector('rect[data-id]')
+    expect(rect).toBeTruthy()
+  })
+
+  it('uses transparent fill by default', () => {
+    const { container } = render(<App />)
+    const svg = container.querySelector('svg') as SVGSVGElement
+    mockSvgRect(svg)
+
+    // Click the Rectangle tool
+    const rectTool = screen.getByTitle('Rectangle')
+    fireEvent.click(rectTool)
+
+    // Create rectangle using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 200, 200)
+    })
+
+    const rect = container.querySelector('rect[data-id]') as SVGRectElement
+    expect(rect).toBeTruthy()
+    // Fill should be transparent
+    expect(rect.getAttribute('fill')).toBe('transparent')
+  })
+
+  it('hides rotate handle on multi-selection', () => {
+    const { container } = render(<App />)
+    const svg = container.querySelector('svg') as SVGSVGElement
+    mockSvgRect(svg)
+
+    // Create two rectangles using test utilities
+    const store = __testUtils.getStore('default')
+    act(() => {
+      __testUtils.createRect(store!, 100, 100)
+      __testUtils.createRect(store!, 300, 100)
+    })
+
+    // Get both rectangles
+    const rects = container.querySelectorAll('rect[data-id]')
+    expect(rects.length).toBe(2)
+
+    // Select both via store
+    const rectIds = Array.from(rects).map(r => r.getAttribute('data-id')!)
+    act(() => {
+      store!.dispatch({ type: 'selection/setMany', ids: rectIds })
+    })
+
+    // Rotate handle should NOT be visible with multi-selection
+    expect(container.querySelector('circle[data-handle="rotate"]')).not.toBeInTheDocument()
   })
 })

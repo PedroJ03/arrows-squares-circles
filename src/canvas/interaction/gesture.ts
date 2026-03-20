@@ -1,10 +1,11 @@
 import type { CanvasStore } from '../store/canvasStore'
-import type { Anchor, Arrow, ArrowEndpoint, Node, Point } from '../model/types'
+import type { Arrow, ArrowEndpoint, Bounds, CanvasObject, Point, Shape } from '../model/types'
 import {
   ENDPOINT_ATTACH_DISTANCE,
   distance,
   getAnchorPoint,
   getClosestAnchor,
+  getMarqueeIntersectingIds,
   getNodeCenter,
   hitTestScene,
   inverseRotatePoint,
@@ -18,17 +19,18 @@ type InteractionMode =
   | 'rotating'
   | 'panning'
   | 'endpoint'
+  | 'marquee'
 
 type InteractionState = {
   mode: InteractionMode
   pointerId: number | null
   start: Point
   last: Point
-  nodeId?: string
-  arrowId?: string
+  objectId?: string
   handle?: string
-  startNode?: Node
+  startObject?: CanvasObject
   startView?: { pan: Point; zoom: number }
+  marqueeStart?: Point
 }
 
 export const createGestureController = (options: {
@@ -84,55 +86,66 @@ export const createGestureController = (options: {
     state.startView = { ...store.getState().view }
   }
 
-  const startDrag = (event: React.PointerEvent<SVGSVGElement>, node: Node) => {
+  const startDrag = (event: React.PointerEvent<SVGSVGElement>, obj: CanvasObject) => {
     startInteraction(event)
     state.mode = 'dragging'
-    state.nodeId = node.id
-    state.startNode = { ...node }
+    state.objectId = obj.id
+    state.startObject = { ...obj } as CanvasObject
     store.startHistory()
   }
 
-  const startResize = (event: React.PointerEvent<SVGSVGElement>, node: Node, handle: string) => {
+  const startResize = (event: React.PointerEvent<SVGSVGElement>, node: Shape, handle: string) => {
     startInteraction(event)
     state.mode = 'resizing'
-    state.nodeId = node.id
+    state.objectId = node.id
     state.handle = handle
-    state.startNode = { ...node }
+    state.startObject = { ...node } as CanvasObject
     store.startHistory()
   }
 
-  const startRotate = (event: React.PointerEvent<SVGSVGElement>, node: Node) => {
+  const startRotate = (event: React.PointerEvent<SVGSVGElement>, node: Shape) => {
     startInteraction(event)
     state.mode = 'rotating'
-    state.nodeId = node.id
-    state.startNode = { ...node }
+    state.objectId = node.id
+    state.startObject = { ...node } as CanvasObject
     store.startHistory()
   }
 
   const startEndpoint = (event: React.PointerEvent<SVGSVGElement>, arrow: Arrow, handle: string) => {
     startInteraction(event)
     state.mode = 'endpoint'
-    state.arrowId = arrow.id
+    state.objectId = arrow.id
     state.handle = handle
     store.startHistory()
   }
 
+  const startMarquee = (event: React.PointerEvent<SVGSVGElement>) => {
+    startInteraction(event)
+    state.mode = 'marquee'
+    state.marqueeStart = { ...state.start }
+    store.dispatch({ type: 'selection/setMarquee', bounds: null }, { history: false })
+  }
+
   const endInteraction = () => {
-    if (state.mode !== 'idle' && state.mode !== 'panning') {
+    if (state.mode !== 'idle' && state.mode !== 'panning' && state.mode !== 'marquee') {
       store.commitHistory()
       onCommit?.()
     }
     state.mode = 'idle'
     state.pointerId = null
-    state.nodeId = undefined
-    state.arrowId = undefined
+    state.objectId = undefined
     state.handle = undefined
-    state.startNode = undefined
+    state.startObject = undefined
     state.startView = undefined
+    state.marqueeStart = undefined
   }
 
   const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (event.button === 2 || keys.has(' ')) {
+    const { ui } = store.getState()
+    const tool = ui.tool
+
+    // Pan mode or space key
+    if (event.button === 2 || keys.has(' ') || tool === 'pan') {
       event.preventDefault()
       startPan(event)
       return
@@ -145,73 +158,223 @@ export const createGestureController = (options: {
     const targetId = datasetId ?? target?.getAttribute?.('data-id') ?? undefined
     const { scene } = store.getState()
 
+    // Handle UI handles (resize, rotate, endpoint, text-edit)
     if (handle && targetId) {
-      const node = scene.nodes.find((item) => item.id === targetId)
-      const arrow = scene.arrows.find((item) => item.id === targetId)
-      if (node && handle.startsWith('resize')) {
-        startResize(event, node, handle)
+      const obj = scene.byId[targetId]
+      if (!obj) return
+
+      if ((obj.type === 'rectangle' || obj.type === 'ellipse') && handle.startsWith('resize')) {
+        startResize(event, obj, handle)
         return
       }
-      if (node && handle === 'rotate') {
-        startRotate(event, node)
+      if ((obj.type === 'rectangle' || obj.type === 'ellipse') && handle === 'rotate') {
+        startRotate(event, obj)
         return
       }
-      if (arrow && handle.startsWith('endpoint')) {
-        startEndpoint(event, arrow, handle)
+      if (obj.type === 'arrow' && handle.startsWith('endpoint')) {
+        startEndpoint(event, obj, handle)
+        return
+      }
+      if (obj.type === 'text' && handle === 'text-edit') {
+        store.dispatch({ type: 'selection/setEditingText', id: targetId }, { history: false })
         return
       }
     }
 
-    if (targetId) {
-      const node = scene.nodes.find((item) => item.id === targetId)
-      if (node) {
-        store.dispatch({ type: 'selection/set', id: node.id }, { history: false })
-        startDrag(event, node)
-        return
-      }
-      const arrow = scene.arrows.find((item) => item.id === targetId)
-      if (arrow) {
-        store.dispatch({ type: 'selection/set', id: arrow.id }, { history: false })
-        return
-      }
-    }
-
+    // Check if clicking on an existing object
     const canvasPoint = getCanvasPoint(event)
     const hitId = hitTestScene(canvasPoint, scene)
-    if (hitId) {
-      store.dispatch({ type: 'selection/set', id: hitId }, { history: false })
-      const node = scene.nodes.find((item) => item.id === hitId)
-      if (node) {
-        startDrag(event, node)
+
+    // Delete tool
+    if (tool === 'delete') {
+      if (hitId) {
+        const { selection } = store.getState()
+        const idsToDelete = selection.ids.includes(hitId) ? selection.ids : [hitId]
+        if (idsToDelete.length > 0) {
+          store.dispatch({ type: 'objects/deleteMany', ids: idsToDelete })
+        }
+      }
+      // No-op if no hit - do nothing
+      return
+    }
+
+    // Text tool - place text object
+    if (tool === 'text') {
+      const textObj = {
+        id: crypto.randomUUID(),
+        type: 'text' as const,
+        x: canvasPoint.x,
+        y: canvasPoint.y,
+        content: 'Text',
+        rotation: 0,
+        strokeColor: store.getState().defaults.strokeColor,
+        fontSize: ui.textFontSize,
+      }
+      store.dispatch({ type: 'object/add', object: textObj })
+      store.dispatch({ type: 'selection/setEditingText', id: textObj.id }, { history: false })
+      // Single-shot: return to pointer
+      store.dispatch({ type: 'tool/set', tool: 'pointer' })
+      return
+    }
+
+    // Rectangle tool
+    if (tool === 'rectangle') {
+      const shape = {
+        id: crypto.randomUUID(),
+        type: 'rectangle' as const,
+        x: canvasPoint.x - 60,
+        y: canvasPoint.y - 40,
+        width: 120,
+        height: 80,
+        rotation: 0,
+        strokeColor: store.getState().defaults.strokeColor,
+        strokeWidth: store.getState().defaults.strokeWidth,
+        fillColor: store.getState().defaults.fillColor,
+      }
+      store.dispatch({ type: 'object/add', object: shape })
+      // Single-shot: return to pointer
+      store.dispatch({ type: 'tool/set', tool: 'pointer' })
+      return
+    }
+
+    // Ellipse tool
+    if (tool === 'ellipse') {
+      const shape = {
+        id: crypto.randomUUID(),
+        type: 'ellipse' as const,
+        x: canvasPoint.x - 55,
+        y: canvasPoint.y - 55,
+        width: 110,
+        height: 110,
+        rotation: 0,
+        strokeColor: store.getState().defaults.strokeColor,
+        strokeWidth: store.getState().defaults.strokeWidth,
+        fillColor: store.getState().defaults.fillColor,
+      }
+      store.dispatch({ type: 'object/add', object: shape })
+      // Single-shot: return to pointer
+      store.dispatch({ type: 'tool/set', tool: 'pointer' })
+      return
+    }
+
+    // Arrow tool
+    if (tool === 'arrow') {
+      const arrow = {
+        id: crypto.randomUUID(),
+        type: 'arrow' as const,
+        start: { kind: 'free' as const, x: canvasPoint.x - 80, y: canvasPoint.y },
+        end: { kind: 'free' as const, x: canvasPoint.x + 80, y: canvasPoint.y },
+        strokeColor: store.getState().defaults.strokeColor,
+        strokeWidth: store.getState().defaults.strokeWidth,
+        arrowStyle: store.getState().defaults.arrowStyle,
+      }
+      store.dispatch({ type: 'object/add', object: arrow })
+      // Single-shot: return to pointer
+      store.dispatch({ type: 'tool/set', tool: 'pointer' })
+      return
+    }
+
+    // Pointer tool - existing behavior
+    if (tool === 'pointer') {
+      if (hitId) {
+        const obj = scene.byId[hitId]
+        if (obj) {
+          // Add to selection if Shift is held, otherwise replace
+          const currentIds = store.getState().selection.ids
+          const newIds = event.shiftKey 
+            ? (currentIds.includes(hitId) ? currentIds.filter(id => id !== hitId) : [...currentIds, hitId])
+            : [hitId]
+          store.dispatch({ type: 'selection/setMany', ids: newIds }, { history: false })
+          
+          if (obj.type === 'rectangle' || obj.type === 'ellipse') {
+            startDrag(event, obj)
+            return
+          }
+          return
+        }
+      } else {
+        // Start marquee selection
+        startMarquee(event)
         return
       }
-      const arrow = scene.arrows.find((item) => item.id === hitId)
-      if (arrow) {
-        store.dispatch({ type: 'selection/set', id: arrow.id }, { history: false })
-        return
-      }
-    } else {
-      store.dispatch({ type: 'selection/set', id: null }, { history: false })
     }
   }
 
   const updateDrag = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (!state.nodeId || !state.startNode) return
+    if (!state.objectId || !state.startObject) return
     const nextPoint = getCanvasPoint(event)
     const dx = nextPoint.x - state.start.x
     const dy = nextPoint.y - state.start.y
-    const node = { ...state.startNode, x: state.startNode.x + dx, y: state.startNode.y + dy }
+
+    // Handle batch move for multi-selection
+    const { selection } = store.getState()
+    if (selection.ids.length > 1 && selection.ids.includes(state.objectId)) {
+      // Move all selected objects
+      for (const id of selection.ids) {
+        const startObj = selection.ids[0] === id ? state.startObject : store.getState().scene.byId[id]
+        if (!startObj) continue
+        
+        if (startObj.type === 'arrow') {
+          const arrowStart = startObj.start.kind === 'free' 
+            ? { kind: 'free' as const, x: startObj.start.x + dx, y: startObj.start.y + dy }
+            : startObj.start
+          const arrowEnd = startObj.end.kind === 'free'
+            ? { kind: 'free' as const, x: startObj.end.x + dx, y: startObj.end.y + dy }
+            : startObj.end
+          store.dispatch({ type: 'object/update', id, patch: { start: arrowStart, end: arrowEnd } }, { history: false })
+          continue
+        }
+        
+        if (startObj.type === 'text') {
+          store.dispatch({ type: 'object/update', id, patch: { x: startObj.x + dx, y: startObj.y + dy } }, { history: false })
+          continue
+        }
+
+        // Shape drag
+        const node = { ...startObj, x: startObj.x + dx, y: startObj.y + dy } as Shape
+        const { scene, snapping } = store.getState()
+        const snappedNode = snapping.enabled
+          ? applySnapToNode(node, getSnapTargets(scene, id))
+          : node
+        store.dispatch({ type: 'object/update', id, patch: { x: snappedNode.x, y: snappedNode.y } }, { history: false })
+      }
+      return
+    }
+
+    // Single object drag
+    const startObj = state.startObject
+    if (startObj.type === 'arrow') {
+      // Arrow drag - update endpoints
+      const arrowStart = startObj.start.kind === 'free' 
+        ? { kind: 'free' as const, x: startObj.start.x + dx, y: startObj.start.y + dy }
+        : startObj.start
+      const arrowEnd = startObj.end.kind === 'free'
+        ? { kind: 'free' as const, x: startObj.end.x + dx, y: startObj.end.y + dy }
+        : startObj.end
+      store.dispatch({ type: 'object/update', id: state.objectId!, patch: { start: arrowStart, end: arrowEnd } }, { history: false })
+      return
+    }
+    
+    if (startObj.type === 'text') {
+      store.dispatch({ type: 'object/update', id: state.objectId!, patch: { x: startObj.x + dx, y: startObj.y + dy } }, { history: false })
+      return
+    }
+
+    // Shape drag
+    const node = { ...startObj, x: startObj.x + dx, y: startObj.y + dy } as Shape
     const { scene, snapping } = store.getState()
     const snappedNode = snapping.enabled
       ? applySnapToNode(node, getSnapTargets(scene, node.id))
       : node
-    store.dispatch({ type: 'node/update', id: node.id, patch: { x: snappedNode.x, y: snappedNode.y } }, { history: false })
+    store.dispatch({ type: 'object/update', id: state.objectId!, patch: { x: snappedNode.x, y: snappedNode.y } }, { history: false })
   }
 
   const updateResize = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (!state.nodeId || !state.startNode || !state.handle) return
+    if (!state.objectId || !state.startObject || !state.handle) return
+    if (state.startObject.type === 'arrow' || state.startObject.type === 'text') return
+    
     const nextPoint = getCanvasPoint(event)
-    const node = state.startNode
+    const node = state.startObject as Shape
     const center = getNodeCenter(node)
     const localPoint = inverseRotatePoint(nextPoint, center, node.rotation)
     let { x, y, width, height } = node
@@ -240,8 +403,8 @@ export const createGestureController = (options: {
       : resized
     store.dispatch(
       {
-        type: 'node/update',
-        id: node.id,
+        type: 'object/update',
+        id: state.objectId!,
         patch: { x: snapped.x, y: snapped.y, width: snapped.width, height: snapped.height },
       },
       { history: false },
@@ -249,12 +412,14 @@ export const createGestureController = (options: {
   }
 
   const updateRotate = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (!state.nodeId || !state.startNode) return
-    const node = state.startNode
+    if (!state.objectId || !state.startObject) return
+    if (state.startObject.type === 'arrow' || state.startObject.type === 'text') return
+    
+    const node = state.startObject as Shape
     const center = getNodeCenter(node)
     const nextPoint = getCanvasPoint(event)
     const angle = Math.atan2(nextPoint.y - center.y, nextPoint.x - center.x)
-    store.dispatch({ type: 'node/update', id: node.id, patch: { rotation: angle } }, { history: false })
+    store.dispatch({ type: 'object/update', id: state.objectId!, patch: { rotation: angle } }, { history: false })
   }
 
   const updatePan = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -265,34 +430,48 @@ export const createGestureController = (options: {
     store.dispatch({ type: 'view/pan', dx, dy }, { history: false })
   }
 
+  const updateMarquee = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (state.mode !== 'marquee' || !state.marqueeStart) return
+    const current = getCanvasPoint(event)
+    const minX = Math.min(state.marqueeStart.x, current.x)
+    const minY = Math.min(state.marqueeStart.y, current.y)
+    const maxX = Math.max(state.marqueeStart.x, current.x)
+    const maxY = Math.max(state.marqueeStart.y, current.y)
+    
+    const marquee: Bounds = {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    }
+    
+    store.dispatch({ type: 'selection/setMarquee', bounds: marquee }, { history: false })
+  }
+
   const updateEndpoint = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (!state.arrowId || !state.handle) return
+    if (!state.objectId || !state.handle) return
     const nextPoint = getCanvasPoint(event)
     const { scene, snapping } = store.getState()
-    const targets = getSnapTargets(scene, state.arrowId)
+    const targets = getSnapTargets(scene, state.objectId)
     const snapped = snapping.enabled ? applySnapToPoint(nextPoint, targets) : { point: nextPoint, snapped: false }
     let endpoint: ArrowEndpoint = { kind: 'free', x: snapped.point.x, y: snapped.point.y }
 
-    let attachedTarget: Node | undefined
-    let attachedAnchor: Anchor | undefined
-    let bestDistance = ENDPOINT_ATTACH_DISTANCE
-    scene.nodes.forEach((node) => {
+    // Check for anchor attachment
+    for (const id of scene.order) {
+      const obj = scene.byId[id]
+      if (!obj || obj.type === 'arrow' || obj.type === 'text') continue
+      const node = obj as Shape
       const anchor = getClosestAnchor(node, snapped.point)
       const anchorPoint = getAnchorPoint(node, anchor)
       const dist = distance(snapped.point, anchorPoint)
-      if (dist < bestDistance) {
-        bestDistance = dist
-        attachedTarget = node
-        attachedAnchor = anchor
+      if (dist < ENDPOINT_ATTACH_DISTANCE) {
+        endpoint = { kind: 'attached', targetId: node.id, anchor }
+        break
       }
-    })
-
-    if (attachedTarget && attachedAnchor) {
-      endpoint = { kind: 'attached', targetId: attachedTarget.id, anchor: attachedAnchor }
     }
 
     const patch = state.handle === 'endpoint-start' ? { start: endpoint } : { end: endpoint }
-    store.dispatch({ type: 'arrow/update', id: state.arrowId, patch }, { history: false })
+    store.dispatch({ type: 'object/update', id: state.objectId!, patch }, { history: false })
   }
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -300,7 +479,7 @@ export const createGestureController = (options: {
     state.last = getCanvasPoint(event)
     switch (state.mode) {
       case 'dragging':
-        if (state.nodeId) updateDrag(event)
+        updateDrag(event)
         break
       case 'resizing':
         updateResize(event)
@@ -314,6 +493,9 @@ export const createGestureController = (options: {
       case 'endpoint':
         updateEndpoint(event)
         break
+      case 'marquee':
+        updateMarquee(event)
+        break
       default:
         break
     }
@@ -321,6 +503,21 @@ export const createGestureController = (options: {
 
   const handlePointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
     if (state.pointerId !== event.pointerId) return
+    
+    // Commit marquee selection
+    if (state.mode === 'marquee') {
+      const { scene, selection } = store.getState()
+      if (selection.marquee) {
+        const intersecting = getMarqueeIntersectingIds(scene, selection.marquee)
+        if (intersecting.length > 0) {
+          store.dispatch({ type: 'selection/setMany', ids: intersecting })
+        } else {
+          store.dispatch({ type: 'selection/setMany', ids: [] })
+        }
+      }
+      store.dispatch({ type: 'selection/setMarquee', bounds: null }, { history: false })
+    }
+    
     endInteraction()
   }
 

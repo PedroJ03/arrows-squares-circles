@@ -1,12 +1,15 @@
-import type { Node, Point, Scene } from '../model/types'
+import type { Point, Scene, Shape } from '../model/types'
 import { SNAP_DISTANCE, getNodeCenter } from '../model/geometry'
 
 export type SnapTarget = { x: number; y: number }
 
 export const getSnapTargets = (scene: Scene, excludeId?: string): SnapTarget[] => {
   const targets: SnapTarget[] = []
-  scene.nodes.forEach((node) => {
-    if (node.id === excludeId) return
+  for (const id of scene.order) {
+    const obj = scene.byId[id]
+    if (!obj || obj.type === 'arrow' || obj.type === 'text') continue
+    if (id === excludeId) continue
+    const node = obj as Shape
     const center = getNodeCenter(node)
     const xs = [node.x, center.x, node.x + node.width]
     const ys = [node.y, center.y, node.y + node.height]
@@ -15,7 +18,7 @@ export const getSnapTargets = (scene: Scene, excludeId?: string): SnapTarget[] =
         targets.push({ x, y })
       })
     })
-  })
+  }
   return targets
 }
 
@@ -37,10 +40,10 @@ export const applySnapToPoint = (
 }
 
 export const applySnapToNode = (
-  node: Node,
+  node: Shape,
   targets: SnapTarget[],
   threshold: number = SNAP_DISTANCE,
-): Node => {
+): Shape => {
   const center = getNodeCenter(node)
   const candidatesX = [node.x, center.x, node.x + node.width]
   const candidatesY = [node.y, center.y, node.y + node.height]

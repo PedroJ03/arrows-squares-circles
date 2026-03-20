@@ -1,11 +1,10 @@
-import type { Anchor, Arrow, ArrowEndpoint, Node, Point, Scene } from './types'
-
-export type Bounds = { x: number; y: number; width: number; height: number }
+import type { Anchor, Arrow, ArrowEndpoint, Bounds, CanvasObject, Point, Scene, Shape, TextObject } from './types'
 
 export const SNAP_DISTANCE = 8
 export const ENDPOINT_ATTACH_DISTANCE = 12
+export const ROTATE_HANDLE_GAP = 40
 
-export const getNodeCenter = (node: Node): Point => ({
+export const getNodeCenter = (node: Shape): Point => ({
   x: node.x + node.width / 2,
   y: node.y + node.height / 2,
 })
@@ -27,7 +26,7 @@ export const inverseRotatePoint = (
   angleRad: number,
 ): Point => rotatePoint(point, center, -angleRad)
 
-export const getNodeCorners = (node: Node): Point[] => {
+export const getNodeCorners = (node: Shape): Point[] => {
   const center = getNodeCenter(node)
   const corners = [
     { x: node.x, y: node.y },
@@ -38,7 +37,7 @@ export const getNodeCorners = (node: Node): Point[] => {
   return corners.map((corner) => rotatePoint(corner, center, node.rotation))
 }
 
-export const getNodeBounds = (node: Node): Bounds => {
+export const getNodeBounds = (node: Shape): Bounds => {
   const corners = getNodeCorners(node)
   const xs = corners.map((c) => c.x)
   const ys = corners.map((c) => c.y)
@@ -49,7 +48,7 @@ export const getNodeBounds = (node: Node): Bounds => {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-export const getAnchorPoint = (node: Node, anchor: Anchor): Point => {
+export const getAnchorPoint = (node: Shape, anchor: Anchor): Point => {
   const center = getNodeCenter(node)
   const halfW = node.width / 2
   const halfH = node.height / 2
@@ -74,7 +73,7 @@ export const getAnchorPoint = (node: Node, anchor: Anchor): Point => {
   return rotatePoint(point, center, node.rotation)
 }
 
-export const getClosestAnchor = (node: Node, point: Point): Anchor => {
+export const getClosestAnchor = (node: Shape, point: Point): Anchor => {
   const anchors: Anchor[] = ['n', 's', 'e', 'w', 'center']
   let best: Anchor = 'center'
   let bestDist = Number.POSITIVE_INFINITY
@@ -103,8 +102,8 @@ export const distanceToSegment = (p: Point, a: Point, b: Point): number => {
 
 export const resolveEndpoint = (endpoint: ArrowEndpoint, scene: Scene): Point => {
   if (endpoint.kind === 'free') return { x: endpoint.x, y: endpoint.y }
-  const target = scene.nodes.find((node) => node.id === endpoint.targetId)
-  if (!target) return { x: 0, y: 0 }
+  const target = scene.byId[endpoint.targetId]
+  if (!target || target.type === 'arrow' || target.type === 'text') return { x: 0, y: 0 }
   return getAnchorPoint(target, endpoint.anchor)
 }
 
@@ -128,10 +127,10 @@ export const getArrowPathPoints = (arrow: Arrow, scene: Scene): Point[] => {
   return [start, end]
 }
 
-export const hitTestNode = (point: Point, node: Node): boolean => {
+export const hitTestNode = (point: Point, node: Shape): boolean => {
   const center = getNodeCenter(node)
   const local = inverseRotatePoint(point, center, node.rotation)
-  if (node.type === 'square') {
+  if (node.type === 'rectangle') {
     return (
       local.x >= node.x &&
       local.x <= node.x + node.width &&
@@ -155,13 +154,104 @@ export const hitTestArrow = (point: Point, arrow: Arrow, scene: Scene): boolean 
 }
 
 export const hitTestScene = (point: Point, scene: Scene): string | null => {
-  for (let i = scene.nodes.length - 1; i >= 0; i -= 1) {
-    const node = scene.nodes[i]
-    if (hitTestNode(point, node)) return node.id
-  }
-  for (let i = scene.arrows.length - 1; i >= 0; i -= 1) {
-    const arrow = scene.arrows[i]
-    if (hitTestArrow(point, arrow, scene)) return arrow.id
+  // Check in reverse order (top objects first)
+  for (let i = scene.order.length - 1; i >= 0; i -= 1) {
+    const id = scene.order[i]
+    const obj = scene.byId[id]
+    if (!obj) continue
+    
+    if (obj.type === 'rectangle' || obj.type === 'ellipse') {
+      if (hitTestNode(point, obj)) return obj.id
+    } else if (obj.type === 'arrow') {
+      if (hitTestArrow(point, obj, scene)) return obj.id
+    } else if (obj.type === 'text') {
+      // Text hit test: use a simple bounding box
+      const textBounds: Bounds = {
+        x: obj.x,
+        y: obj.y,
+        width: obj.content.length * (obj.fontSize ?? 24) * 0.6,
+        height: obj.fontSize ?? 24,
+      }
+      if (boundsContainsPoint(textBounds, point)) return obj.id
+    }
   }
   return null
+}
+
+// Bounds utilities
+export const boundsContainsPoint = (bounds: Bounds, point: Point): boolean => {
+  return (
+    point.x >= bounds.x &&
+    point.x <= bounds.x + bounds.width &&
+    point.y >= bounds.y &&
+    point.y <= bounds.y + bounds.height
+  )
+}
+
+export const boundsIntersect = (a: Bounds, b: Bounds): boolean => {
+  return !(
+    a.x + a.width < b.x ||
+    b.x + b.width < a.x ||
+    a.y + a.height < b.y ||
+    b.y + b.height < a.y
+  )
+}
+
+export const getObjectBounds = (obj: CanvasObject, scene: Scene): Bounds => {
+  if (obj.type === 'rectangle' || obj.type === 'ellipse') {
+    return getNodeBounds(obj)
+  }
+  if (obj.type === 'arrow') {
+    return getArrowBounds(obj, scene)
+  }
+  // Text object
+  const textObj = obj as TextObject
+  const fontSize = textObj.fontSize ?? 24
+  return {
+    x: textObj.x,
+    y: textObj.y,
+    width: textObj.content.length * fontSize * 0.6,
+    height: fontSize,
+  }
+}
+
+export const getArrowBounds = (arrow: Arrow, scene: Scene): Bounds => {
+  const points = getArrowPathPoints(arrow, scene)
+  const xs = points.map((p) => p.x)
+  const ys = points.map((p) => p.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+export const getMarqueeIntersectingIds = (scene: Scene, marquee: Bounds): string[] => {
+  const intersecting: string[] = []
+  for (const id of scene.order) {
+    const obj = scene.byId[id]
+    if (!obj) continue
+    const bounds = getObjectBounds(obj, scene)
+    if (boundsIntersect(bounds, marquee)) {
+      intersecting.push(id)
+    }
+  }
+  return intersecting
+}
+
+export const getRotateHandlePoint = (node: Shape): Point => {
+  const center = getNodeCenter(node)
+  // Top edge midpoint
+  const topMidX = node.x + node.width / 2
+  const topMidY = node.y
+  const topMid = rotatePoint({ x: topMidX, y: topMidY }, center, node.rotation)
+  // Direction from center to top midpoint
+  const dx = topMid.x - center.x
+  const dy = topMid.y - center.y
+  const len = Math.hypot(dx, dy)
+  // Extend outward by ROTATE_HANDLE_GAP
+  return {
+    x: topMid.x + (dx / len) * ROTATE_HANDLE_GAP,
+    y: topMid.y + (dy / len) * ROTATE_HANDLE_GAP,
+  }
 }
